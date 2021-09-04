@@ -63,6 +63,20 @@ var TestFeature1States = []*models.FeatureState{
 				},
 			},
 			{
+				ID:    "s3.1",
+				Name:  "userkey",
+				Value: "this is for userkey prawn",
+				Attributes: []*models.StrategyAttribute{
+					{
+						ID:          "a3.1",
+						Conditional: strategies.ConditionalEquals,
+						FieldName:   strategies.FieldNameUserkey,
+						Values:      []interface{}{"prawn"},
+						Type:        strategies.TypeString,
+					},
+				},
+			},
+			{
 				ID:    "s4",
 				Name:  "version-less",
 				Value: "version less than 15.23.4",
@@ -265,6 +279,13 @@ func TestClientWithContext(t *testing.T) {
 		WithContext(&models.Context{Device: models.ContextDeviceServer}).
 		GetString("TestFeature1")
 	assert.Equal(t, "this is not for mobile users", stringValue)
+	assert.NoError(t, err)
+
+	// See if we can match the "userkey" attribute:
+	stringValue, err = testClient.
+		WithContext(&models.Context{Userkey: "prawn"}).
+		GetString("TestFeature1")
+	assert.Equal(t, "this is for userkey prawn", stringValue)
 	assert.NoError(t, err)
 
 	// See if we can match the "version-less" attribute:
