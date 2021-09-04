@@ -140,6 +140,19 @@ func (s Strategy) proceedWithAttributes(clientContext *Context) bool {
 			logger.Tracef("Didn't match attribute strategy (%s:%s = %v) for platform: %v\n", sa.ID, sa.FieldName, sa.Values, clientContext.Platform)
 			return false
 
+		// Match by userkey:
+		case strategies.FieldNameUserkey:
+			logger.Trace("Trying userkey")
+			matched, err := sa.matchType(sa.Values, fmt.Sprintf("%s", clientContext.Userkey))
+			if err != nil {
+				logger.WithError(err).Error("Unable to match type")
+			}
+			if matched {
+				continue
+			}
+			logger.Tracef("Didn't match attribute strategy (%s:%s = %v) for userkey: %v\n", sa.ID, sa.FieldName, sa.Values, clientContext.Userkey)
+			return false
+
 		// Match by version:
 		case strategies.FieldNameVersion:
 			logger.Trace("Trying version")
