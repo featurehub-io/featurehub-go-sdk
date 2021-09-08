@@ -7,14 +7,24 @@ import (
 )
 
 func TestNumberTypeAssertion(t *testing.T) {
+
+	// Try with some unsupported options values:
 	_, err := Number(ConditionalEquals, []interface{}{"string", false}, 123)
 	assert.Error(t, err)
 
+	// Try with an unsupported comparison value:
 	_, err = Number(ConditionalEquals, []interface{}{55.123}, "string")
 	assert.Error(t, err)
 
-	_, err = Number(ConditionalEquals, []interface{}{55.123}, 44.5)
-	assert.NoError(t, err)
+	// Test all valid numeric types:
+	for numericValue := range []interface{}{
+		float32(44.5), float64(44.5),
+		uint(475), uint8(75), uint16(7125), uint32(712312315), uint64(7511111131232331231),
+		int(475), int8(75), int16(7125), int32(712312315), int64(7511111131232331231),
+	} {
+		_, err = Number(ConditionalEquals, []interface{}{55.123}, numericValue)
+		assert.NoError(t, err)
+	}
 }
 
 func TestNumberEquals(t *testing.T) {
