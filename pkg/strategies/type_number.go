@@ -15,8 +15,8 @@ func Number(conditional string, options []interface{}, value interface{}) (bool,
 
 	// Type switch on the value (because numbers can come in a bunch of interesting shapes and sizes):
 	switch value.(type) {
-	case float32:
-		assertedValue = float64(value.(float32))
+	// case float32:
+	// 	assertedValue = float64(value.(float32))
 	case int:
 		assertedValue = float64(value.(int))
 	case int8:
