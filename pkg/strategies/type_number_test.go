@@ -1,20 +1,106 @@
 package strategies
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
+type numericTest struct {
+	err     bool
+	options []interface{}
+	result  bool
+	value   interface{}
+}
+
 func TestNumberTypeAssertion(t *testing.T) {
-	_, err := Number(ConditionalEquals, []interface{}{"string", false}, 123)
-	assert.Error(t, err)
 
-	_, err = Number(ConditionalEquals, []interface{}{55.123}, "string")
-	assert.Error(t, err)
-
-	_, err = Number(ConditionalEquals, []interface{}{55.123}, 44.5)
-	assert.NoError(t, err)
+	// Run numeric comparisons against a set of pre-defined tests and expected results:
+	for _, numericComparisonTest := range []numericTest{
+		{
+			// This will fail because we can only compare against float64 (this is how it comes with JSON from the FH API):
+			err:     true,
+			options: []interface{}{"string", false},
+			value:   123,
+		},
+		{
+			// This will fail because we can only compare numeric types (not strings):
+			err:     true,
+			options: []interface{}{55.123},
+			value:   "string",
+		},
+		{
+			// This will fail because of different floating point precision:
+			err:     true,
+			options: []interface{}{55.123},
+			result:  false,
+			value:   float32(55.123),
+		},
+		{
+			options: []interface{}{55.123},
+			result:  true,
+			value:   float64(55.123),
+		},
+		{
+			options: []interface{}{float64(55)},
+			result:  true,
+			value:   int(55),
+		},
+		{
+			options: []interface{}{float64(55)},
+			result:  true,
+			value:   int8(55),
+		},
+		{
+			options: []interface{}{float64(5555)},
+			result:  true,
+			value:   int16(5555),
+		},
+		{
+			options: []interface{}{float64(712312315)},
+			result:  true,
+			value:   int32(712312315),
+		},
+		{
+			options: []interface{}{float64(7511111131232331231)},
+			result:  true,
+			value:   int64(7511111131232331231),
+		},
+		{
+			options: []interface{}{float64(55)},
+			result:  true,
+			value:   uint(55),
+		},
+		{
+			options: []interface{}{float64(55)},
+			result:  true,
+			value:   uint8(55),
+		},
+		{
+			options: []interface{}{float64(5555)},
+			result:  true,
+			value:   uint16(5555),
+		},
+		{
+			options: []interface{}{float64(712312315)},
+			result:  true,
+			value:   uint32(712312315),
+		},
+		{
+			options: []interface{}{float64(7511111131232331231)},
+			result:  true,
+			value:   uint64(7511111131232331231),
+		},
+	} {
+		ok, err := Number(ConditionalEquals, numericComparisonTest.options, numericComparisonTest.value)
+		assert.Equal(t, numericComparisonTest.result, ok, "Value of type %s", reflect.TypeOf(numericComparisonTest.value))
+		if numericComparisonTest.err {
+			assert.Error(t, err)
+		} else {
+			assert.NoError(t, err)
+		}
+	}
 }
 
 func TestNumberEquals(t *testing.T) {
