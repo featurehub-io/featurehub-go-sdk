@@ -241,6 +241,7 @@ func TestClientWithContext(t *testing.T) {
 	clientWithContext := testClient.WithContext(testContext)
 	assert.Equal(t, testClient, clientWithContext.client)
 	assert.Equal(t, testContext, clientWithContext.Context)
+	assert.Equal(t, testClient, clientWithContext.Client())
 
 	// Marshal the TestFeature1States to JSON:
 	TestFeature1StatesJSON, err := json.Marshal(TestFeature1States)

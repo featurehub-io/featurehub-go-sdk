@@ -13,6 +13,11 @@ type ClientWithContext struct {
 	config *Config
 }
 
+// Client provides access to the client:
+func (cc *ClientWithContext) Client() interfaces.Client {
+	return cc.client
+}
+
 // GetFeature searches for a feature by key:
 func (cc *ClientWithContext) GetFeature(key string) (*models.FeatureState, error) {
 	return cc.client.GetFeature(key)
