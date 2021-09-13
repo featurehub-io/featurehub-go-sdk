@@ -15,7 +15,7 @@ func TestConfig(t *testing.T) {
 	newConfig := NewConfig("myserver", "mySDKKey").WithLogLevel(logrus.WarnLevel).WithWaitForData(true)
 	assert.Equal(t, "myserver", newConfig.ServerAddress)
 	assert.Equal(t, "mySDKKey", newConfig.SDKKey)
-	assert.Equal(t, logrus.WarnLevel, newConfig.LogLevel)
+	assert.Equal(t, defaultLogLevel, newConfig.LogLevel)
 	assert.True(t, newConfig.WaitForData)
 
 	// Try to connect (it will of course fail):
