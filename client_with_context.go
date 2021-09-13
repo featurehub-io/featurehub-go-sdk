@@ -10,7 +10,7 @@ import (
 type ClientWithContext struct {
 	*models.Context
 	client interfaces.Client
-	config *Config
+	config *models.Config
 }
 
 // Client provides access to the client:
@@ -153,4 +153,11 @@ func (cc *ClientWithContext) GetString(key string) (string, error) {
 
 	// Return the default value as a fall-back:
 	return defaultValue, nil
+}
+
+// WithContext returns a new clienWithContext:
+// - the underlying client is inherited
+// - the context is replaced with the one provided
+func (cc *ClientWithContext) WithContext(context *models.Context) *ClientWithContext {
+	return cc.config.WithContext(context)
 }

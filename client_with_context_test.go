@@ -243,6 +243,15 @@ func TestClientWithContext(t *testing.T) {
 	assert.Equal(t, testContext, clientWithContext.Context)
 	assert.Equal(t, testClient, clientWithContext.Client())
 
+	// Try getting a new client with a replaced context:
+	replacementContext := &models.Context{
+		Userkey: "TestClientWithContext",
+		Country: "New Zealand",
+	}
+	replacementClient := clientWithContext.WithContext(replacementContext)
+	assert.Equal(t, clientWithContext.client, replacementClient.client)
+	assert.Equal(t, replacementContext, replacementClient.Context)
+
 	// Marshal the TestFeature1States to JSON:
 	TestFeature1StatesJSON, err := json.Marshal(TestFeature1States)
 	assert.NoError(t, err)
