@@ -163,3 +163,9 @@ If you have a complex context then you can define it as a single struct:
 If the featureValue has rollout strategies defined then they will be applied according to the client context you provide.
 
 Note the map of `Custom` values, which are evaluated against your custom features according to their field names (keys).
+
+
+Further examples
+----------------
+
+Further examples can be found in the [offical examples](https://github.com/featurehub-io/featurehub-examples/tree/master/golang-service) repo
