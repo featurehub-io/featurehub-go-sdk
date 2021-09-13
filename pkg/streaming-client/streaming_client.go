@@ -1,4 +1,4 @@
-package client
+package streamingclient
 
 import (
 	"net/http"
@@ -51,7 +51,7 @@ func NewStreamingClient(config *Config) (*StreamingClient, error) {
 	logger.SetLevel(config.LogLevel)
 
 	// Set this logger in the models package (they use a global to keep the API simple):
-	models.SetLogger(logger)
+	SetLogger(logger)
 
 	// Put this into a new StreamingClient:
 	client := &StreamingClient{
@@ -104,8 +104,9 @@ func (c *StreamingClient) Start() {
 // WithContext returns a ClientWithContext:
 func (c *StreamingClient) WithContext(context *models.Context) *ClientWithContext {
 	return &ClientWithContext{
-		client:  c,
 		Context: context,
+		client:  c,
+		config:  c.config,
 	}
 }
 

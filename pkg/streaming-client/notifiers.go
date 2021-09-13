@@ -1,4 +1,4 @@
-package client
+package streamingclient
 
 import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"

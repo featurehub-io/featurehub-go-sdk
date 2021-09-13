@@ -1,4 +1,4 @@
-package client
+package streamingclient
 
 import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
@@ -10,7 +10,7 @@ import (
 type ClientWithContext struct {
 	*models.Context
 	client interfaces.Client
-	config *models.Config
+	config *Config
 }
 
 // Client provides access to the client:
