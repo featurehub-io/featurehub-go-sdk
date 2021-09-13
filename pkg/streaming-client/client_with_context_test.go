@@ -1,4 +1,4 @@
-package client
+package streamingclient
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/donovanhide/eventsource"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/strategies"
 	"github.com/sirupsen/logrus"
@@ -241,6 +242,17 @@ func TestClientWithContext(t *testing.T) {
 	clientWithContext := testClient.WithContext(testContext)
 	assert.Equal(t, testClient, clientWithContext.client)
 	assert.Equal(t, testContext, clientWithContext.Context)
+	assert.Equal(t, testClient, clientWithContext.Client())
+	assert.Implements(t, new(interfaces.Client), testClient)
+
+	// Try getting a new client with a replaced context:
+	replacementContext := &models.Context{
+		Userkey: "TestClientWithContext",
+		Country: "New Zealand",
+	}
+	replacementClient := clientWithContext.WithContext(replacementContext)
+	// assert.Equal(t, clientWithContext.client, replacementClient.client)
+	assert.Equal(t, replacementContext, replacementClient.Context)
 
 	// Marshal the TestFeature1States to JSON:
 	TestFeature1StatesJSON, err := json.Marshal(TestFeature1States)

@@ -1,4 +1,4 @@
-package client
+package streamingclient
 
 import (
 	"testing"

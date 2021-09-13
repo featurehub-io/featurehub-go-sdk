@@ -31,13 +31,13 @@ There are 3 steps to connecting:
 #### Prepare a configuration (with a client):
 ```go
 	// Start by creating a config with your serverAddress and API-key:
-	config, err := client.NewConfig(serverAddress, apiKey).WithLogLevel(logrus.WarnLevel).WithWaitForData(true).Connect()
+	fhConfig, err := client.New(serverAddress, apiKey).WithLogLevel(logrus.WarnLevel).WithWaitForData(true).Connect()
 	if err != nil {
 		log.Panicf("Error creating config: %s", err)
 	}
 
 	// Get a context from this config:
-	context := config.NewContext()
+	fhClient := fhClient.NewContext()
 ```
 
 ### Requesting Features
@@ -49,7 +49,7 @@ The client SDK offers various `Get` methods to retrieve different types of featu
 
 #### Retrieve a BOOLEAN value:
 ```go
-	someBoolean, err := context.GetBoolean("booleanfeature")
+	someBoolean, err := fhClient.GetBoolean("booleanfeature")
 	if err != nil {
 		log.Fatalf("Error retrieving a BOOLEAN feature: %s", err)
 	}
@@ -58,7 +58,7 @@ The client SDK offers various `Get` methods to retrieve different types of featu
 
 #### Retrieve a JSON value:
 ```go
-	someJSON, err := context.GetRawJSON("jsonfeature")
+	someJSON, err := fhClient.GetRawJSON("jsonfeature")
 	if err != nil {
 		log.Fatalf("Error retrieving a JSON feature: %s", err)
 	}
@@ -67,7 +67,7 @@ The client SDK offers various `Get` methods to retrieve different types of featu
 
 #### Retrieve a NUMBER value:
 ```go
-	someNumber, err := context.GetNumber("numberfeature")
+	someNumber, err := fhClient.GetNumber("numberfeature")
 	if err != nil {
 		log.Fatalf("Error retrieving a NUMBER feature: %s", err)
 	}
@@ -76,7 +76,7 @@ The client SDK offers various `Get` methods to retrieve different types of featu
 
 #### Retrieve a STRING value:
 ```go
-	someString, err := context.GetString("stringfeature")
+	someString, err := fhClient.GetString("stringfeature")
 	if err != nil {
 		log.Fatalf("Error retrieving a STRING feature: %s", err)
 	}
@@ -106,7 +106,7 @@ The client SDK provides the ability to generate analytics events with the `LogAn
 ```go
 	action := "payment"
 	tags := map[string]string{"user": "bob"}
-	client.LogAnalyticsEvent(action, tags)
+	fhClient.LogAnalyticsEvent(action, tags)
 ```
 The SDK offers a logging analytics collector which will log events to the console at DEBUG level (useful in your unit tests probably).
 
@@ -119,7 +119,7 @@ The GoLang SDK comes with a pre-made Google Analytics collector. Here is how to 
 	if err != nil {
 		panic(err)
 	}
-	client.AddAnalyticsCollector(googleAnalyticsCollector)
+	fhClient.AddAnalyticsCollector(googleAnalyticsCollector)
 ```
 Any subsequent calls to `client.LogAnalyticsEvent()` will result in events being sent via the Google Analytics collector (as well as any other which you have added).
 
@@ -129,18 +129,18 @@ Some rollout strategies need to be calculated per-request, which means that we c
 
 ```go
 	// Add some values to the context:
-	context.Country = "russia"
-	context.Custom["test"] = true
+	fhClient.Country = "russia"
+	fhClient.Custom["test"] = true
 
 	// Now retrieved feature values will be evaluated against your context:
-	featureValue, err = context.GetString("featureKey")
+	featureValue, err = fhClient.GetString("featureKey")
 ```
 
 If you have a complex context then you can define it as a single struct:
 
 ```go
 	// You can also define a context as a struct:
-	clientContext := &Context{
+	clientContext := &models.Context{
 		Userkey:  "12345",
 		Device:   "server",
 		Platform: "linux",
@@ -154,10 +154,10 @@ If you have a complex context then you can define it as a single struct:
 	}
 
 	// And get the config to return you a fully-loaded context:
-	context := config.WithContext(clientContext)
+	fhClient := fhConfig.WithContext(clientContext)
 
 	// Now retrieved feature values will be evaluated against your context:
-	featureValue, err = context.GetString("featureKey")
+	featureValue, err = fhClient.GetString("featureKey")
 ```
 
 If the featureValue has rollout strategies defined then they will be applied according to the client context you provide.
