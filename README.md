@@ -106,7 +106,7 @@ The client SDK provides the ability to generate analytics events with the `LogAn
 ```go
 	action := "payment"
 	tags := map[string]string{"user": "bob"}
-	fhClient.Client().LogAnalyticsEvent(action, tags)
+	fhClient.LogAnalyticsEvent(action, tags)
 ```
 The SDK offers a logging analytics collector which will log events to the console at DEBUG level (useful in your unit tests probably).
 
@@ -119,7 +119,7 @@ The GoLang SDK comes with a pre-made Google Analytics collector. Here is how to 
 	if err != nil {
 		panic(err)
 	}
-	fhClient.Client().AddAnalyticsCollector(googleAnalyticsCollector)
+	fhClient.AddAnalyticsCollector(googleAnalyticsCollector)
 ```
 Any subsequent calls to `client.LogAnalyticsEvent()` will result in events being sent via the Google Analytics collector (as well as any other which you have added).
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/donovanhide/eventsource"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/strategies"
 	"github.com/sirupsen/logrus"
@@ -242,6 +243,7 @@ func TestClientWithContext(t *testing.T) {
 	assert.Equal(t, testClient, clientWithContext.client)
 	assert.Equal(t, testContext, clientWithContext.Context)
 	assert.Equal(t, testClient, clientWithContext.Client())
+	assert.Implements(t, new(interfaces.Client), testClient)
 
 	// Try getting a new client with a replaced context:
 	replacementContext := &models.Context{
