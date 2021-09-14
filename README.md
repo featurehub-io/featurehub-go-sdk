@@ -168,4 +168,4 @@ Note the map of `Custom` values, which are evaluated against your custom feature
 Further examples
 ----------------
 
-Further examples can be found in the [offical examples](https://github.com/featurehub-io/featurehub-examples/tree/master/golang-service) repo
+Further examples can be found in the [examples directory](examples)
