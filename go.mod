@@ -6,6 +6,7 @@ require (
 	github.com/berdowsky/go-ogle-analytics v0.0.0-20180507070355-0e42771d3f03
 	github.com/donovanhide/eventsource v0.0.0-20171031113327-3ed64d21fb0b
 	github.com/google/uuid v1.1.1
+	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mcuadros/go-version v0.0.0-20190830083331-035f6764e8d2
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
