@@ -36,5 +36,5 @@ You can also try adding some custom rollout strategies to your "goodbye" feature
 One final example here is how to use a percentage-based rollout strategy on the userkey field:
 - Create a new boolean feature called "random" which defaults to false
 - Add a percentage strategy which will set it to true 50% of the time
-- Now try hitting `curl http://localhost:8080/mapped?name=somebody` with a couple of different names. Roughly 50% of them should return hello, the other half goodbye
+- Now try hitting `curl http://localhost:8080/random?name=somebody` with a couple of different names. Roughly 50% of them should return hello, the other half goodbye
 - The response should be consistent for each name (eg "bob" will always receive the same greeting, "fred" will always receive the same greeting)
