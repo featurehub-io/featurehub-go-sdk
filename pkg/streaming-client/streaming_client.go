@@ -65,7 +65,7 @@ func NewStreamingClient(config *Config) (*StreamingClient, error) {
 	}
 
 	// Use the default fatalErrorFunc to handle fatal errors:
-	client.fatalErrorHandler = client.fatalErrorFunc
+	client.WithFatalErrorHandler(client.fatalErrorFunc)
 
 	// Report that we're starting:
 	logger.WithField("server_address", client.config.ServerAddress).Info("Subscribing to FeatureHub server")
@@ -120,6 +120,12 @@ func (c *StreamingClient) WithContext(context *models.Context) *ClientWithContex
 		client:  c,
 		config:  c.config,
 	}
+}
+
+// WithFatalErrorHandler configures an error handler which will be called for asynchronous fatal errors:
+func (c *StreamingClient) WithFatalErrorHandler(fatalErrorFunc ErrorFunc) *StreamingClient {
+	c.fatalErrorHandler = fatalErrorFunc
+	return c
 }
 
 // isReady triggers various notifications that the client is ready to serve data:
