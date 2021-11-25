@@ -17,11 +17,12 @@ const (
 
 // Config defines parameters for the client:
 type Config struct {
-	LogLevel      logrus.Level // Logging level (default is "info")
-	SDKKey        string       // SDK key (copied from the UI), in the format "{namedCache}/environmentID/APIKey"
-	ServerAddress string       // FeatureHub API endpoint
-	WaitForData   bool         // New() will block until some data has arrived
-	client        interfaces.Client
+	LogLevel          logrus.Level      // Logging level (default is "info")
+	SDKKey            string            // SDK key (copied from the UI), in the format "{namedCache}/environmentID/APIKey"
+	ServerAddress     string            // FeatureHub API endpoint
+	WaitForData       bool              // New() will block until some data has arrived
+	client            interfaces.Client // A FeatureHub client implementation
+	fatalErrorHandler *ErrorFunc        // A user-provided handler func for fatal asynchronous errors
 }
 
 // NewConfig returns a configured Config:
@@ -43,7 +44,11 @@ func (c *Config) Connect() (*Config, error) {
 	}
 
 	// Start the client:
-	client.Start()
+	if c.fatalErrorHandler != nil {
+		client.WithFatalErrorHandler(*c.fatalErrorHandler).Start()
+	} else {
+		client.Start()
+	}
 
 	c.client = client
 	return c, nil
@@ -93,6 +98,12 @@ func (c *Config) WithContext(context *models.Context) *ClientWithContext {
 		client:  c.client,
 		config:  c,
 	}
+}
+
+// WithFatalErrorHandler configures an error handler which will be called for asynchronous fatal errors:
+func (c *Config) WithFatalErrorHandler(fatalErrorFunc ErrorFunc) *Config {
+	c.fatalErrorHandler = &fatalErrorFunc
+	return c
 }
 
 // WithLogLevel adds a logLevel to the config:

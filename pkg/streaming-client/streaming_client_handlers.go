@@ -42,7 +42,11 @@ func (c *StreamingClient) handleEvents() {
 
 		// Failures (from the FeatureHub server):
 		case models.FHFailure:
-			c.logger.WithError(&errors.ErrFromAPI{}).WithField("event", event.Event()).WithField("message", event.Data()).Fatal("Failure from FeatureHub server")
+			details := map[string]interface{}{
+				"event":   event.Event(),
+				"message": event.Data(),
+			}
+			c.fatalErrorHandler(&errors.ErrFromAPI{}, "Failure from FeatureHub server", details)
 
 		// One specific feature (replaces the previous version):
 		case models.FHFeature:
@@ -64,7 +68,12 @@ func (c *StreamingClient) handleSSEError(event eventsource.Event) {
 	if c.hasData {
 		c.logger.WithError(&errors.ErrFromAPI{}).WithField("event", event.Event()).WithField("message", event.Data()).Error("Error from API client")
 	} else {
-		c.logger.WithError(&errors.ErrFromAPI{}).WithField("event", event.Event()).WithField("message", event.Data()).Fatal("Error from API client")
+		// Use the fatailErrorFunc for this one:
+		details := map[string]interface{}{
+			"event":   event.Event(),
+			"message": event.Data(),
+		}
+		c.fatalErrorFunc(&errors.ErrFromAPI{}, "Error from API client", details)
 	}
 }
 
