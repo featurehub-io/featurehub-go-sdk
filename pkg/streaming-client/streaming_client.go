@@ -12,12 +12,16 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// ErrorFunc is called when asynchronous errors are encountered:
+type ErrorFunc func(error, string, map[string]interface{})
+
 // StreamingClient implements the client interface by by subscribing to server-side events:
 type StreamingClient struct {
 	analyticsCollectors []interfaces.AnalyticsCollector
 	analyticsMutex      sync.Mutex
 	apiClient           *eventsource.Stream
 	config              *Config
+	fatalErrorHandler   ErrorFunc
 	features            map[string]*models.FeatureState
 	featuresMutex       sync.Mutex
 	featuresURL         string
@@ -60,6 +64,9 @@ func NewStreamingClient(config *Config) (*StreamingClient, error) {
 		notifiers: make(notifiers),
 	}
 
+	// Use the default fatalErrorFunc to handle fatal errors:
+	client.fatalErrorHandler = client.fatalErrorFunc
+
 	// Report that we're starting:
 	logger.WithField("server_address", client.config.ServerAddress).Info("Subscribing to FeatureHub server")
 
@@ -79,6 +86,11 @@ func NewStreamingClient(config *Config) (*StreamingClient, error) {
 	client.apiClient = apiClient
 
 	return client, nil
+}
+
+// FatalErrorFunc is called when an unrecoverable asynchronous error is encountered:
+func (c *StreamingClient) fatalErrorFunc(err error, message string, details map[string]interface{}) {
+	c.logger.WithError(err).WithFields(details).Fatal(message)
 }
 
 // ReadinessListener defines a callback function which will be triggered once the client has received data for the first time:
