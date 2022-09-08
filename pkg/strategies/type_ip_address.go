@@ -3,10 +3,30 @@ package strategies
 import (
 	"fmt"
 	"net"
+	"strings"
 )
 
 // TypeIPAddress is for ip-address values (eg "1.2.3.4" or "10.0.0.0/16"):
 const TypeIPAddress = "IP_ADDRESS"
+
+// parseIP get ip address from CIDR or simple ip (eg "1.2.3.4" or "10.0.0.0/16"):
+func parseIP(value string) (net.IP, error) {
+	// Check for ip contain CIDR
+	isCIDR := strings.Contains(value, "/")
+
+	if isCIDR {
+		ip, _, err := net.ParseCIDR(value)
+		return ip, err
+	}
+
+	// Try to parse simple ip address
+	ip := net.ParseIP(value)
+	if len(ip) == 0 {
+		return net.IP{}, fmt.Errorf("unknown ip: %s", value)
+	}
+
+	return ip, nil
+}
 
 // IPAddress asserts the given parameters then passes on for evaluation:
 func IPAddress(conditional string, options []interface{}, value interface{}) (bool, error) {
@@ -17,8 +37,7 @@ func IPAddress(conditional string, options []interface{}, value interface{}) (bo
 		return false, fmt.Errorf("Unable to assert value (%v) as string", value)
 	}
 
-	// The value should be a valid IP address:
-	ip, _, err := net.ParseCIDR(assertedValue)
+	ip, err := parseIP(assertedValue)
 	if err != nil {
 		return false, err
 	}
@@ -35,7 +54,7 @@ func IPAddress(conditional string, options []interface{}, value interface{}) (bo
 	}
 
 	// The string evaluations are fine for TypeIPAddress:
-	return evaluateString(conditional, assertedOptions, assertedValue), nil
+	return evaluateIPAddress(conditional, assertedOptions, assertedValue), nil
 }
 
 // evaluateIPAddress makes evaluations for TypeIPAddress values:
@@ -69,7 +88,7 @@ func evaluateIPAddress(conditional string, options []string, value string) bool 
 	case ConditionalExcludes:
 
 		// Parse the value IP:
-		valueIP, _, err := net.ParseCIDR(value)
+		valueIP, err := parseIP(value)
 		if err != nil {
 			return false
 		}
@@ -92,7 +111,7 @@ func evaluateIPAddress(conditional string, options []string, value string) bool 
 	case ConditionalIncludes:
 
 		// Parse the value IP:
-		valueIP, _, err := net.ParseCIDR(value)
+		valueIP, err := parseIP(value)
 		if err != nil {
 			return false
 		}

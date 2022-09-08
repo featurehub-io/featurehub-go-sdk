@@ -36,6 +36,8 @@ func TestIPAddressExcludes(t *testing.T) {
 func TestIPAddressIncludes(t *testing.T) {
 	assert.False(t, evaluateIPAddress(ConditionalIncludes, []string{"10.2.0.0/24"}, "1.3.3.4/32"))
 	assert.False(t, evaluateIPAddress(ConditionalIncludes, []string{"10.0.0.0/16"}, "10.1.1.6/32"))
+	assert.False(t, evaluateIPAddress(ConditionalIncludes, []string{"10.0.0.0/16"}, "10.1.1.6"))
 	assert.True(t, evaluateIPAddress(ConditionalIncludes, []string{"10.1.0.0/16"}, "10.1.1.6/32"))
+	assert.True(t, evaluateIPAddress(ConditionalIncludes, []string{"10.1.0.0/16"}, "10.1.1.6"))
 	assert.True(t, evaluateIPAddress(ConditionalIncludes, []string{"10.1.0.0/16"}, "10.1.2.0/24"))
 }
