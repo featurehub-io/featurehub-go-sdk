@@ -36,6 +36,10 @@ func (c *StreamingClient) handleEvents() {
 		case models.SSEError:
 			c.handleSSEError(event)
 
+		// FeatureHub configuration events:
+		case models.FHConfig:
+			c.handleFHConfigEvent(event)
+
 		// Delete a feature from our list:
 		case models.FHDeleteFeature:
 			c.handleFHDeleteFeature(event)
@@ -74,6 +78,23 @@ func (c *StreamingClient) handleSSEError(event eventsource.Event) {
 			"message": event.Data(),
 		}
 		c.fatalErrorFunc(&errors.ErrFromAPI{}, "Error from API client", details)
+	}
+}
+
+func (c *StreamingClient) handleFHConfigEvent(event eventsource.Event) {
+
+	// Unmarshal the event payload:
+	configEvent := new(models.ConfigEvent)
+	if err := json.Unmarshal([]byte(event.Data()), configEvent); err != nil {
+		c.logger.WithError(err).WithField("event", "config").Error("Error unmarshaling SSE payload")
+	}
+
+	// Handle "edge.stale" config:
+	if configEvent.EdgeStale {
+
+		// Close the SSE client connection:
+		c.logger.Warn("The FeatureHub server has requested that we close our connection (edge.stale)! No further updates will be received - existing data will continue to be served")
+		c.apiClient.Close()
 	}
 }
 

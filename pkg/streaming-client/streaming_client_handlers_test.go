@@ -59,6 +59,12 @@ func TestStreamingClientHandlers(t *testing.T) {
 		event: "delete_feature",
 	}
 
+	// Load the mock apiClient up with a "config_stale" event:
+	client.apiClient.Events <- &testEvent{
+		data:  `{"edge.stale":true}`,
+		event: "config",
+	}
+
 	// Start handling events:
 	client.Start()
 
@@ -76,4 +82,7 @@ func TestStreamingClientHandlers(t *testing.T) {
 
 	// Check that the client knew not to trigger the readiness listener (because there was none):
 	assert.Contains(t, logBuffer.String(), "No registered readinessListener() to call")
+
+	// Check that the client knew not to trigger the readiness listener (because there was none):
+	assert.Contains(t, logBuffer.String(), "Cruftastic")
 }
