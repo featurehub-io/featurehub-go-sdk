@@ -12,6 +12,9 @@ const SSEBye Event = "bye"
 // SSEError is a standard SSE event (connection error):
 const SSEError Event = "error"
 
+// FHConfig is a FeatureHub config event (client configuration instructions from the server):
+const FHConfig Event = "config"
+
 // FHDeleteFeature is a FeatureHub SSE event (telling us that a feature has been deleted):
 const FHDeleteFeature Event = "delete_feature"
 
