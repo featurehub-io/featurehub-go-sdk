@@ -84,5 +84,5 @@ func TestStreamingClientHandlers(t *testing.T) {
 	assert.Contains(t, logBuffer.String(), "No registered readinessListener() to call")
 
 	// Check that the client knew not to trigger the readiness listener (because there was none):
-	assert.Contains(t, logBuffer.String(), "Cruftastic")
+	assert.Contains(t, logBuffer.String(), "The FeatureHub server has requested that we close our connection")
 }

@@ -14,6 +14,13 @@ func (c *StreamingClient) handleErrors() {
 	// Run forever (blocks on receiving events from the client channel):
 	for {
 		event := <-c.apiClient.Errors
+
+		// We may have been shut down by some external process:
+		if !c.isRunning {
+			c.logger.Info("No longer handling SSE errors")
+			break
+		}
+
 		c.logger.WithError(event).Trace("Error from API client")
 	}
 }
@@ -24,6 +31,12 @@ func (c *StreamingClient) handleEvents() {
 	// Run forever (blocks on receiving events from the client channel):
 	for {
 		event := <-c.apiClient.Events
+
+		// We may have been shut down by some external process:
+		if !c.isRunning {
+			c.logger.Info("No longer handling SSE events")
+			break
+		}
 
 		// Handle the different types of events that can be received on this channel:
 		switch models.Event(event.Event()) {
@@ -94,6 +107,7 @@ func (c *StreamingClient) handleFHConfigEvent(event eventsource.Event) {
 
 		// Close the SSE client connection:
 		c.logger.Warn("The FeatureHub server has requested that we close our connection (edge.stale)! No further updates will be received - existing data will continue to be served")
+		c.isRunning = false
 		c.apiClient.Close()
 	}
 }
