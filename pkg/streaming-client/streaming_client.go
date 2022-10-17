@@ -26,6 +26,7 @@ type StreamingClient struct {
 	featuresMutex       sync.Mutex
 	featuresURL         string
 	hasData             bool
+	isRunning           bool
 	logger              *logrus.Logger
 	notifiers           notifiers
 	notifiersMutex      sync.Mutex
@@ -100,6 +101,9 @@ func (c *StreamingClient) ReadinessListener(callbackFunc func()) {
 
 // Start begins handling events from the streamer:
 func (c *StreamingClient) Start() {
+
+	// Set the isRunning flag:
+	c.isRunning = true
 
 	// Handle incoming events:
 	go c.handleEvents()
