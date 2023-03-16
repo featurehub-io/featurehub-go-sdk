@@ -165,6 +165,14 @@ If the featureValue has rollout strategies defined then they will be applied acc
 Note the map of `Custom` values, which are evaluated against your custom features according to their field names (keys).
 
 
+Setup using docker
+----------------
+We have dockerfile, use below commands to setup 
+```
+1. docker build -t featurehub-go-sdk:v1 .
+2. docker run -p 8080:8080 featurehub-go-sdk:v1
+```
+
 Further examples
 ----------------
 
