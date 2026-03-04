@@ -5,7 +5,6 @@ import (
 
 	client "github.com/featurehub-io/featurehub-go-sdk"
 	"github.com/featurehub-io/featurehub-go-sdk/examples/http-service/internal/handler"
-	"github.com/featurehub-io/featurehub-go-sdk/pkg/analytics"
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 )
@@ -30,9 +29,6 @@ func main() {
 	}
 
 	fhClient := fhConfig.NewContext()
-
-	// Configure a logging analytics collector:
-	fhClient.AddAnalyticsCollector(analytics.NewLoggingAnalyticsCollector(logger))
 
 	// Prepare a turn.io handler using the recorder:
 	handler := handler.New(logger, fhClient)

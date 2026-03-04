@@ -100,30 +100,6 @@ The client SDK allows the user to define a callback function which will be trigg
 * `ReadinessListener(callback func())`: Sets the readiness listener to a specific user-provided function
 
 
-### Analytics Collector
-The client SDK provides the ability to generate analytics events with the `LogAnalyticsEvent` method. An event will be generated for each feature that we have.
-
-```go
-	action := "payment"
-	tags := map[string]string{"user": "bob"}
-	fhClient.LogAnalyticsEvent(action, tags)
-```
-The SDK offers a logging analytics collector which will log events to the console at DEBUG level (useful in your unit tests probably).
-
-
-#### Google Analytics
-The GoLang SDK comes with a pre-made Google Analytics collector. Here is how to use it:
-
-```go
-	googleAnalyticsCollector, err := analytics.NewGoogleAnalyticsCollector(clientID, trackingID, userAgentKey)
-	if err != nil {
-		panic(err)
-	}
-	fhClient.AddAnalyticsCollector(googleAnalyticsCollector)
-```
-Any subsequent calls to `client.LogAnalyticsEvent()` will result in events being sent via the Google Analytics collector (as well as any other which you have added).
-
-
 ### Client-side rollout strategies
 Some rollout strategies need to be calculated per-request, which means that we can't rely on the server to do this for us. For this we provide the ability to apply a client context to a feature before using its value:
 

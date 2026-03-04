@@ -82,7 +82,7 @@ func TestStreamingClientNotifiers(t *testing.T) {
 	}
 	feature2UUID2 := client.AddNotifierFeature("feature2", callbackFunc22)
 	assert.Len(t, client.notifiers["feature2"], 2)
-	assert.NotSame(t, feature2UUID1, feature2UUID2)
+	assert.NotEqual(t, feature2UUID1, feature2UUID2)
 
 	// Feature3 gets 1 notifer, but we'll delete it before it gets called:
 	var callback3called int

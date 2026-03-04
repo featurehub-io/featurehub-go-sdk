@@ -6,7 +6,6 @@ import (
 
 // Client for FeatureHub:
 type Client interface {
-	AddAnalyticsCollector(newAnalyticsCollector AnalyticsCollector)                                      // Configure a new analytics collector, add it to the list:
 	AddNotifierBoolean(featureKey string, callbackFunc models.CallbackFuncBoolean) (notifierUUID string) // Configure a notifier for a BOOLEAN value:
 	AddNotifierFeature(featureKey string, callbackFunc models.CallbackFuncFeature) (notifierUUID string) // Configure a notifier for a generic feature:
 	AddNotifierJSON(featureKey string, callbackFunc models.CallbackFuncJSON) (notifierUUID string)       // Configure a notifier for a JSON value:
@@ -18,7 +17,5 @@ type Client interface {
 	GetNumber(featureKey string) (float64, error)                                                        // Retrieve a value (by key) for a NUMBER feature
 	GetRawJSON(featureKey string) (string, error)                                                        // Retrieve a value (by key) for a JSON feature
 	GetString(featureKey string) (string, error)                                                         // Retrieve a value (by key) for a STRING feature
-	LogAnalyticsEvent(action string, other map[string]string)                                            // Send an analytics event (non-blocking, fire and forget)
-	LogAnalyticsEventSync(action string, other map[string]string) error                                  // Send an analytics event, but wait for it to complete
 	ReadinessListener(callbackFunc func())                                                               // Configure the SDK with a function to call when we're ready (up and running with some data)
 }

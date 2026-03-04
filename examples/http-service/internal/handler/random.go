@@ -15,10 +15,6 @@ func (h *Handler) Random(w http.ResponseWriter, r *http.Request) {
 	// Get the "name" parameter (from the query string):
 	name := r.FormValue("name")
 
-	// Log an analytics event:
-	tags := map[string]string{"name": name}
-	h.fhClient.LogAnalyticsEvent("Random", tags)
-
 	// Get a new context for this session (loaded with a parameter from the request):
 	sessionContext := h.fhClient.WithContext(&models.Context{Userkey: name})
 

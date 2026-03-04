@@ -12,10 +12,6 @@ func (h *Handler) Static(w http.ResponseWriter, r *http.Request) {
 	// Get the "name" parameter (from the query string):
 	name := r.FormValue("name")
 
-	// Log an analytics event:
-	tags := map[string]string{"name": name}
-	h.fhClient.LogAnalyticsEvent("Static", tags)
-
 	// Look up a boolean feature called "goodbye":
 	sayGoodbye, err := h.fhClient.GetBoolean("goodbye")
 	if err != nil {
