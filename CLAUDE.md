@@ -26,12 +26,11 @@ This is a Go client SDK for FeatureHub, a feature management platform. The SDK c
 ### Package Layout
 
 - **Root package** (`client.go`): Entry point facade. `New(serverAddress, sdkKey)` returns a `Config` builder.
-- **`pkg/interfaces/`**: Public API contracts (`Client`, `AnalyticsCollector`).
+- **`pkg/interfaces/`**: Public API contracts (`Client`).
 - **`pkg/models/`**: Domain objects — `FeatureState`, `Context`, strategy types, SSE event types.
-- **`pkg/streaming-client/`**: Core implementation. The `StreamingClient` manages the SSE connection, feature cache (protected by mutex), notifier callbacks, and analytics delegation.
+- **`pkg/streaming-client/`**: Core implementation. The `StreamingClient` manages the SSE connection, feature cache (protected by mutex), and notifier callbacks.
 - **`pkg/strategies/`**: Client-side rollout strategy matchers for boolean, number, string, semver, date, datetime, and IP address attribute types.
 - **`pkg/errors/`**: Typed errors: `ErrBadConfig`, `ErrFeatureNotFound`, `ErrInvalidType`, `ErrNotifierNotFound`, `ErrFromAPI`.
-- **`pkg/analytics/`**: Built-in `AnalyticsCollector` implementation: `LoggingAnalyticsCollector`.
 - **`pkg/mocks/`**: Generated mocks (via `make mocks` using `counterfeiter`). Do not edit manually.
 
 ### Connection Flow
@@ -65,7 +64,7 @@ Handled in `pkg/streaming-client/streaming_client_handlers.go`:
 
 ### Thread Safety
 
-The feature cache, notifiers map, and analytics collectors list are each protected by their own `sync.Mutex`. Feature writes (from SSE events) and reads (user code) are both mutex-guarded.
+The feature cache and notifiers map are each protected by their own `sync.Mutex`. Feature writes (from SSE events) and reads (user code) are both mutex-guarded.
 
 ### SDK Key Format
 

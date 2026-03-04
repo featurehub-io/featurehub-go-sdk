@@ -162,11 +162,6 @@ func (cc *ClientWithContext) WithContext(context *models.Context) *ClientWithCon
 	return cc.config.WithContext(context)
 }
 
-// AddAnalyticsCollector configures a new analytics collector, add it to the list:
-func (cc *ClientWithContext) AddAnalyticsCollector(newAnalyticsCollector interfaces.AnalyticsCollector) {
-	cc.client.AddAnalyticsCollector(newAnalyticsCollector)
-}
-
 // AddNotifierBoolean configures a notifier for a BOOLEAN value:
 func (cc *ClientWithContext) AddNotifierBoolean(featureKey string, callbackFunc models.CallbackFuncBoolean) (notifierUUID string) {
 	return cc.client.AddNotifierBoolean(featureKey, callbackFunc)
@@ -195,16 +190,6 @@ func (cc *ClientWithContext) AddNotifierString(featureKey string, callbackFunc m
 // DeleteNotifier removes a previously configured notifier (by key and UUID, because we support more than one notifier per key):
 func (cc *ClientWithContext) DeleteNotifier(featureKey, notifierUUID string) error {
 	return cc.client.DeleteNotifier(featureKey, notifierUUID)
-}
-
-// LogAnalyticsEvent sends an analytics event (non-blocking, fire and forget):
-func (cc *ClientWithContext) LogAnalyticsEvent(action string, other map[string]string) {
-	cc.client.LogAnalyticsEvent(action, other)
-}
-
-// LogAnalyticsEventSync sends an analytics event, and wait for it to complete:
-func (cc *ClientWithContext) LogAnalyticsEventSync(action string, other map[string]string) error {
-	return cc.LogAnalyticsEventSync(action, other)
 }
 
 // ReadinessListener adds a function which will be called when the client is ready:

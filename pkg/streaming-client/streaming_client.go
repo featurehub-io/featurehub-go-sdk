@@ -7,7 +7,6 @@ import (
 
 	"github.com/donovanhide/eventsource"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
-	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/sirupsen/logrus"
 )
@@ -17,20 +16,18 @@ type ErrorFunc func(error, string, map[string]interface{})
 
 // StreamingClient implements the client interface by by subscribing to server-side events:
 type StreamingClient struct {
-	analyticsCollectors []interfaces.AnalyticsCollector
-	analyticsMutex      sync.Mutex
-	apiClient           *eventsource.Stream
-	config              *Config
-	fatalErrorHandler   ErrorFunc
-	features            map[string]*models.FeatureState
-	featuresMutex       sync.Mutex
-	featuresURL         string
-	hasData             bool
-	isRunning           bool
-	logger              *logrus.Logger
-	notifiers           notifiers
-	notifiersMutex      sync.Mutex
-	readinessListener   func()
+	apiClient         *eventsource.Stream
+	config            *Config
+	fatalErrorHandler ErrorFunc
+	features          map[string]*models.FeatureState
+	featuresMutex     sync.Mutex
+	featuresURL       string
+	hasData           bool
+	isRunning         bool
+	logger            *logrus.Logger
+	notifiers         notifiers
+	notifiersMutex    sync.Mutex
+	readinessListener func()
 }
 
 // New wraps NewStreamingClient (as the default / only implementation):

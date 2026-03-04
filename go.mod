@@ -2,6 +2,7 @@ module github.com/featurehub-io/featurehub-go-sdk
 
 go 1.26
 
+
 require (
 	github.com/donovanhide/eventsource v0.0.0-20210830082556-c59027999da0
 	github.com/google/uuid v1.6.0
