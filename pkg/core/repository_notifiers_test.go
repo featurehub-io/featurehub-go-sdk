@@ -86,6 +86,9 @@ func TestRepositoryNotifiers(t *testing.T) {
 	}
 	repository.ReadinessListener(callbackReadiness)
 
+	// Give the notifiers some time to think about what they've done:
+	time.Sleep(250 * time.Millisecond)
+
 	// Check that the correct callbacks were made:
 	assert.Equal(t, 1, callback1called)
 	assert.Equal(t, 1, callback21called)
