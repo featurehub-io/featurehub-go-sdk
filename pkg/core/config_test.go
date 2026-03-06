@@ -23,7 +23,7 @@ func TestConfig(t *testing.T) {
 	assert.Equal(t, "myserver", newConfig.ServerAddress)
 	assert.Equal(t, "mySDKKey", newConfig.SDKKey)
 	assert.Equal(t, logrus.WarnLevel, newConfig.LogLevel)
-	assert.Equal(t, time.Second, newConfig.WaitForData)
+	assert.Equal(t, time.Second, *newConfig.WaitForData)
 
 	// Try to connect (it will of course fail):
 	newConfig, err := newConfig.Connect()

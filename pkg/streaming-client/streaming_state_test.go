@@ -24,10 +24,13 @@ func TestStreamingClientFeatures(t *testing.T) {
 
 	// Make a test config (with an incorrect server address):
 	config := &core.Config{
+		Logger:      logger,
 		WaitForData: &waitPeriod,
 	}
 
 	repo := core.NewClientFeatureHubRepository(logger)
+	config.SetRepository(repo)
+	config.SetInternalRepository(repo)
 
 	// Use the config to make a new StreamingClient with a mock apiClient::
 	client := &StreamingClient{

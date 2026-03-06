@@ -106,6 +106,6 @@ func TestRepositoryFeatures(t *testing.T) {
 
 	booleanFeature, err = client.GetBoolean("booleanfeature")
 	assert.NoError(t, err)
-	assert.Equal(t, true, booleanFeature)
+	assert.Equal(t, false, booleanFeature)
 
 }

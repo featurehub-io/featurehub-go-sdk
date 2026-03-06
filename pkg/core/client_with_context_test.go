@@ -208,6 +208,7 @@ var TestFeature1States = []*models.FeatureState{
 func TestClientWithContext(t *testing.T) {
 	// Use the config to make a new StreamingClient with a mock apiClient::
 	testClient := createClient()
+	var repository interfaces.Repository = testClient
 
 	// Make a repository context:
 	testContext := &models.Context{
@@ -217,10 +218,9 @@ func TestClientWithContext(t *testing.T) {
 	// Make sure our repository and context are present:
 	clientWithContext := testClient.WithContext(testContext)
 	// the repository in the context is the same as the client
-	assert.Equal(t, testClient, clientWithContext.Repository)
-
+	assert.Equal(t, repository, clientWithContext.Repository())
 	assert.Equal(t, testContext, clientWithContext.Attributes())
-	assert.Equal(t, testClient, clientWithContext.Repository())
+
 	assert.Implements(t, new(interfaces.Repository), testClient)
 
 	// Try getting a new repository with a replaced context:
