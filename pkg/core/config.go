@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -44,12 +45,27 @@ func NewConfig(serverAddress, sdkKey string, edgeProvider EdgeProviderFunc) *Con
 	logger := logrus.New()
 	logger.SetLevel(defaultLogLevel)
 
+	// inspect environment variables to see if we are being signalled about what client to use
+	var defaultEdge EdgeType = EdgeStreaming
+	var timeout time.Duration = 0
+
+	if os.Getenv("FEATUREHUB_POLLING_INTERVAL") != "" {
+		defaultEdge = EdgeActiveRest
+		timeout = EnvOrDefaultDuration("FEATUREHUB_POLLING_INTERVAL", 3*time.Minute)
+	}
+
+	if os.Getenv("FEATUREHUB_POLLING_PASSIVE") != "" {
+		defaultEdge = EdgePassiveRest
+	}
+
 	return &Config{
-		LogLevel:      defaultLogLevel,
-		Logger:        logger,
-		SDKKey:        sdkKey,
-		ServerAddress: serverAddress,
-		EdgeProvider:  edgeProvider,
+		LogLevel:          defaultLogLevel,
+		Logger:            logger,
+		SDKKey:            sdkKey,
+		RequestedEdgeType: defaultEdge,
+		ServerAddress:     serverAddress,
+		EdgeProvider:      edgeProvider,
+		timeout:           timeout,
 	}
 }
 
@@ -178,7 +194,17 @@ func (c *Config) WithWaitForData(value time.Duration) *Config {
 	return c
 }
 
-// FeaturesURL give us the full URL for receiving features:
+// FeaturesURL give us the full URL for receiving features (SSE endpoint):
 func (c *Config) FeaturesURL() string {
 	return fmt.Sprintf("%s/features/%s", c.ServerAddress, c.SDKKey)
+}
+
+// PollingFeaturesURL returns the URL for the REST polling endpoint:
+func (c *Config) PollingFeaturesURL() string {
+	return fmt.Sprintf("%s/features?apiKey=%s", c.ServerAddress, c.SDKKey)
+}
+
+// Timeout returns the polling interval configured via ActiveRest or PassiveRest:
+func (c *Config) Timeout() time.Duration {
+	return c.timeout
 }
