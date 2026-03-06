@@ -1,4 +1,4 @@
-package streamingclient
+package core
 
 import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
@@ -6,28 +6,31 @@ import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 )
 
-// ClientWithContext bundles a Context with a client:
+// ClientWithContext bundles a Context with a repository:
 type ClientWithContext struct {
 	*models.Context
-	client interfaces.Client
-	config *Config
+	repository interfaces.Repository
 }
 
-// Client provides access to the client:
-func (cc *ClientWithContext) Client() interfaces.Client {
-	return cc.client
+func (cc *ClientWithContext) Attributes() *models.Context {
+	return cc.Context
+}
+
+// Repository provides access to the repository:
+func (cc *ClientWithContext) Repository() interfaces.Repository {
+	return cc.repository
 }
 
 // GetFeature searches for a feature by key:
 func (cc *ClientWithContext) GetFeature(key string) (*models.FeatureState, error) {
-	return cc.client.GetFeature(key)
+	return cc.repository.GetFeature(key)
 }
 
 // GetBoolean searches for a feature by key, returns the value as a boolean:
 func (cc *ClientWithContext) GetBoolean(key string) (bool, error) {
 
 	// Use the existing GetFeature method:
-	fs, err := cc.client.GetFeature(key)
+	fs, err := cc.repository.GetFeature(key)
 	if err != nil {
 		return false, err
 	}
@@ -60,7 +63,7 @@ func (cc *ClientWithContext) GetBoolean(key string) (bool, error) {
 func (cc *ClientWithContext) GetNumber(key string) (float64, error) {
 
 	// Use the existing GetFeature method:
-	fs, err := cc.client.GetFeature(key)
+	fs, err := cc.repository.GetFeature(key)
 	if err != nil {
 		return 0, err
 	}
@@ -93,7 +96,7 @@ func (cc *ClientWithContext) GetNumber(key string) (float64, error) {
 func (cc *ClientWithContext) GetRawJSON(key string) (string, error) {
 
 	// Use the existing GetFeature method:
-	fs, err := cc.client.GetFeature(key)
+	fs, err := cc.repository.GetFeature(key)
 	if err != nil {
 		return "{}", err
 	}
@@ -126,7 +129,7 @@ func (cc *ClientWithContext) GetRawJSON(key string) (string, error) {
 func (cc *ClientWithContext) GetString(key string) (string, error) {
 
 	// Use the existing GetFeature method:
-	fs, err := cc.client.GetFeature(key)
+	fs, err := cc.repository.GetFeature(key)
 	if err != nil {
 		return "", err
 	}
@@ -155,44 +158,50 @@ func (cc *ClientWithContext) GetString(key string) (string, error) {
 	return defaultValue, nil
 }
 
-// WithContext returns a new clienWithContext:
-// - the underlying client is inherited
+func (cc *ClientWithContext) IsReady() bool {
+	return cc.repository.IsReady()
+}
+
+// WithContext returns a new clientWithContext:
+// - the underlying repository is inherited
 // - the context is replaced with the one provided
-func (cc *ClientWithContext) WithContext(context *models.Context) *ClientWithContext {
-	return cc.config.WithContext(context)
+func (cc *ClientWithContext) WithContext(context *models.Context) interfaces.Context {
+	return &ClientWithContext{
+		Context:    context,
+		repository: cc.repository,
+	}
+}
+
+func (cc *ClientWithContext) AddNotifierFeature(featureKey string, callbackFunc models.CallbackFuncFeature) (notifierUUID string, err error) {
+	return cc.repository.AddNotifierFeature(featureKey, callbackFunc)
 }
 
 // AddNotifierBoolean configures a notifier for a BOOLEAN value:
-func (cc *ClientWithContext) AddNotifierBoolean(featureKey string, callbackFunc models.CallbackFuncBoolean) (notifierUUID string) {
-	return cc.client.AddNotifierBoolean(featureKey, callbackFunc)
-}
-
-// AddNotifierFeature configures a notifier for a generic feature:
-func (cc *ClientWithContext) AddNotifierFeature(featureKey string, callbackFunc models.CallbackFuncFeature) (notifierUUID string) {
-	return cc.client.AddNotifierFeature(featureKey, callbackFunc)
+func (cc *ClientWithContext) AddNotifierBoolean(featureKey string, callbackFunc models.CallbackFuncBoolean) (notifierUUID string, err error) {
+	return cc.repository.AddNotifierBoolean(featureKey, callbackFunc)
 }
 
 // AddNotifierJSON configures a notifier for a JSON value:
-func (cc *ClientWithContext) AddNotifierJSON(featureKey string, callbackFunc models.CallbackFuncJSON) (notifierUUID string) {
-	return cc.client.AddNotifierJSON(featureKey, callbackFunc)
+func (cc *ClientWithContext) AddNotifierJSON(featureKey string, callbackFunc models.CallbackFuncJSON) (notifierUUID string, err error) {
+	return cc.repository.AddNotifierJSON(featureKey, callbackFunc)
 }
 
 // AddNotifierNumber configures a notifier for a NUMBER value:
-func (cc *ClientWithContext) AddNotifierNumber(featureKey string, callbackFunc models.CallbackFuncNumber) (notifierUUID string) {
-	return cc.client.AddNotifierNumber(featureKey, callbackFunc)
+func (cc *ClientWithContext) AddNotifierNumber(featureKey string, callbackFunc models.CallbackFuncNumber) (notifierUUID string, err error) {
+	return cc.repository.AddNotifierNumber(featureKey, callbackFunc)
 }
 
 // AddNotifierString configures a notifier for a STRING value:
-func (cc *ClientWithContext) AddNotifierString(featureKey string, callbackFunc models.CallbackFuncString) (notifierUUID string) {
-	return cc.client.AddNotifierString(featureKey, callbackFunc)
+func (cc *ClientWithContext) AddNotifierString(featureKey string, callbackFunc models.CallbackFuncString) (notifierUUID string, err error) {
+	return cc.repository.AddNotifierString(featureKey, callbackFunc)
 }
 
 // DeleteNotifier removes a previously configured notifier (by key and UUID, because we support more than one notifier per key):
 func (cc *ClientWithContext) DeleteNotifier(featureKey, notifierUUID string) error {
-	return cc.client.DeleteNotifier(featureKey, notifierUUID)
+	return cc.repository.DeleteNotifier(featureKey, notifierUUID)
 }
 
-// ReadinessListener adds a function which will be called when the client is ready:
+// ReadinessListener adds a function which will be called when the repository is ready:
 func (cc *ClientWithContext) ReadinessListener(callbackFunc func()) {
-	cc.ReadinessListener(callbackFunc)
+	cc.repository.ReadinessListener(callbackFunc)
 }

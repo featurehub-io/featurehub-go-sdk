@@ -1,16 +1,12 @@
-package streamingclient
+package core
 
 import (
-	"bytes"
-	"encoding/json"
 	"testing"
 	"time"
 
-	"github.com/donovanhide/eventsource"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/strategies"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -23,14 +19,14 @@ var TestFeature1States = []*models.FeatureState{
 		Strategies: []models.Strategy{
 			{
 				ID:    "s1",
-				Name:  "country-russia",
-				Value: "this is for the russians",
+				Name:  "country-thailand",
+				Value: "this is for the thais",
 				Attributes: []*models.StrategyAttribute{
 					{
 						ID:          "a1",
 						Conditional: strategies.ConditionalEquals,
 						FieldName:   strategies.FieldNameCountry,
-						Values:      []interface{}{"russia"},
+						Values:      []interface{}{"thailand"},
 						Type:        strategies.TypeString,
 					},
 				},
@@ -66,13 +62,13 @@ var TestFeature1States = []*models.FeatureState{
 			{
 				ID:    "s3.1",
 				Name:  "userkey",
-				Value: "this is for userkey prawn",
+				Value: "this is for userkey ออม",
 				Attributes: []*models.StrategyAttribute{
 					{
 						ID:          "a3.1",
 						Conditional: strategies.ConditionalEquals,
 						FieldName:   strategies.FieldNameUserkey,
-						Values:      []interface{}{"prawn"},
+						Values:      []interface{}{"ออม"}, // ensure international characters work
 						Type:        strategies.TypeString,
 					},
 				},
@@ -210,73 +206,43 @@ var TestFeature1States = []*models.FeatureState{
 }
 
 func TestClientWithContext(t *testing.T) {
-
-	// Make a test config:
-	config := &Config{
-		WaitForData: true,
-	}
-
-	// Make a logger:
-	logger := logrus.New()
-	logger.SetLevel(logrus.TraceLevel)
-	logBuffer := new(bytes.Buffer)
-	logger.SetOutput(logBuffer)
-
 	// Use the config to make a new StreamingClient with a mock apiClient::
-	testClient := &StreamingClient{
-		apiClient: &eventsource.Stream{
-			Errors: make(chan error, 100),
-			Events: make(chan eventsource.Event, 100),
-		},
-		config:   config,
-		features: make(map[string]*models.FeatureState),
-		logger:   logger,
-	}
+	testClient := createClient()
 
-	// Make a client context:
+	// Make a repository context:
 	testContext := &models.Context{
 		Userkey: "TestClientWithContext",
 	}
 
-	// Make sure our client and context are present:
+	// Make sure our repository and context are present:
 	clientWithContext := testClient.WithContext(testContext)
-	assert.Equal(t, testClient, clientWithContext.client)
-	assert.Equal(t, testContext, clientWithContext.Context)
-	assert.Equal(t, testClient, clientWithContext.Client())
-	assert.Implements(t, new(interfaces.Client), testClient)
+	// the repository in the context is the same as the client
+	assert.Equal(t, testClient, clientWithContext.Repository)
 
-	// Try getting a new client with a replaced context:
+	assert.Equal(t, testContext, clientWithContext.Attributes())
+	assert.Equal(t, testClient, clientWithContext.Repository())
+	assert.Implements(t, new(interfaces.Repository), testClient)
+
+	// Try getting a new repository with a replaced context:
 	replacementContext := &models.Context{
 		Userkey: "TestClientWithContext",
 		Country: "New Zealand",
 	}
 	replacementClient := clientWithContext.WithContext(replacementContext)
-	// assert.Equal(t, clientWithContext.client, replacementClient.client)
-	assert.Equal(t, replacementContext, replacementClient.Context)
+	assert.Equal(t, replacementContext, replacementClient.Attributes())
 
-	// Marshal the TestFeature1States to JSON:
-	TestFeature1StatesJSON, err := json.Marshal(TestFeature1States)
-	assert.NoError(t, err)
+	testClient.ProcessFeatures(TestFeature1States)
 
-	// Load the mock apiClient up with a "features" event:
-	testClient.apiClient.Events <- &testEvent{
-		data:  string(TestFeature1StatesJSON),
-		event: "features",
-	}
-
-	// Start handling events:
-	testClient.Start()
-
-	// First make sure that we get the default value before client-context is added:
+	// First make sure that we get the default value before repository-context is added:
 	stringValue, err := testClient.GetString("TestFeature1")
 	assert.NoError(t, err)
 	assert.Equal(t, "this is the default value", stringValue)
 
-	// See if we can match the "country-russia" attribute:
+	// See if we can match the "country-thailand" attribute:
 	stringValue, err = testClient.
-		WithContext(&models.Context{Country: models.ContextCountryRussia}).
+		WithContext(&models.Context{Country: models.ContextCountryThailand}).
 		GetString("TestFeature1")
-	assert.Equal(t, "this is for the russians", stringValue)
+	assert.Equal(t, "this is for the thais", stringValue)
 	assert.NoError(t, err)
 
 	// See if we can match the "platform-unix" attribute:
@@ -295,9 +261,9 @@ func TestClientWithContext(t *testing.T) {
 
 	// See if we can match the "userkey" attribute:
 	stringValue, err = testClient.
-		WithContext(&models.Context{Userkey: "prawn"}).
+		WithContext(&models.Context{Userkey: "ออม"}).
 		GetString("TestFeature1")
-	assert.Equal(t, "this is for userkey prawn", stringValue)
+	assert.Equal(t, "this is for userkey ออม", stringValue)
 	assert.NoError(t, err)
 
 	// See if we can match the "version-less" attribute:

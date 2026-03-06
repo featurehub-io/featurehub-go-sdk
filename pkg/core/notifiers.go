@@ -1,4 +1,4 @@
-package streamingclient
+package core
 
 import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
@@ -7,33 +7,49 @@ import (
 
 // Notifier ties together a feature, type and callback function:
 type notifier struct {
-	callbackFuncFeature models.CallbackFuncFeature
 	callbackFuncBoolean models.CallbackFuncBoolean
 	callbackFuncJSON    models.CallbackFuncJSON
 	callbackFuncNumber  models.CallbackFuncNumber
 	callbackFuncString  models.CallbackFuncString
+	callbackFuncFeature models.CallbackFuncFeature
 	featureKey          string
-	featureValueType    models.FeatureValueType
 	uuid                string
+}
+
+func (n *notifier) getKey() string {
+	return n.featureKey
 }
 
 // notify triggers the appropriate callback function for this notifier type:
 func (n *notifier) notify(feature *models.FeatureState) error {
+	// ask the feature what type it is
+	featureValueType := feature.Type
+
+	// they registered a callback wanting the entire feature, not a specific type, so give it to them
+	if n.callbackFuncFeature != nil {
+		go n.callbackFuncFeature(feature)
+		return nil
+	}
 
 	// Switch on the stored type:
-	switch n.featureValueType {
+	switch featureValueType {
 
 	case models.TypeBoolean:
+		if n.callbackFuncBoolean == nil {
+			return errors.NewErrInvalidNotifierCallback("a bool callback function was not added to a bool notifier")
+		}
+
 		assertedValue, ok := feature.Value.(bool)
 		if !ok {
 			return errors.NewErrInvalidType("Unable to assert as bool")
 		}
 		go n.callbackFuncBoolean(assertedValue)
 
-	case models.TypeFeature:
-		go n.callbackFuncFeature(feature)
-
 	case models.TypeJSON:
+		if n.callbackFuncJSON == nil {
+			return errors.NewErrInvalidNotifierCallback("a json callback function was not added to a json notifier")
+		}
+
 		assertedValue, ok := feature.Value.(string)
 		if !ok {
 			return errors.NewErrInvalidType("Unable to assert as string")
@@ -41,6 +57,10 @@ func (n *notifier) notify(feature *models.FeatureState) error {
 		go n.callbackFuncJSON(assertedValue)
 
 	case models.TypeNumber:
+		if n.callbackFuncNumber == nil {
+			return errors.NewErrInvalidNotifierCallback("a number callback function was not added to a number notifier")
+		}
+
 		assertedValue, ok := feature.Value.(float64)
 		if !ok {
 			return errors.NewErrInvalidType("Unable to assert as int64")
@@ -48,6 +68,10 @@ func (n *notifier) notify(feature *models.FeatureState) error {
 		go n.callbackFuncNumber(assertedValue)
 
 	case models.TypeString:
+		if n.callbackFuncString == nil {
+			return errors.NewErrInvalidNotifierCallback("a string callback function was not added to a string notifier")
+		}
+
 		assertedValue, ok := feature.Value.(string)
 		if !ok {
 			return errors.NewErrInvalidType("Unable to assert as string")
@@ -55,13 +79,13 @@ func (n *notifier) notify(feature *models.FeatureState) error {
 		go n.callbackFuncString(assertedValue)
 
 	default:
-		return errors.NewErrInvalidType(string(n.featureValueType))
+		return errors.NewErrInvalidType(string(featureValueType))
 	}
 
 	return nil
 }
 
-// notifiers is how they will be arranged in the streaming client:
+// notifiers is how they will be arranged in the streaming repository:
 type notifiers map[string]map[string]notifier
 
 func (n notifiers) add(newNotifier notifier) {

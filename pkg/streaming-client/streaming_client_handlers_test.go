@@ -3,10 +3,11 @@ package streamingclient
 import (
 	"bytes"
 	"testing"
+	"time"
 
 	"github.com/donovanhide/eventsource"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/core"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
-	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
@@ -14,8 +15,9 @@ import (
 func TestStreamingClientHandlers(t *testing.T) {
 
 	// Make a test config (with an incorrect server address):
-	config := &Config{
-		WaitForData: true,
+	timeout := time.Hour
+	config := &core.Config{
+		WaitForData: &timeout,
 	}
 
 	// Make a logger:
@@ -24,15 +26,17 @@ func TestStreamingClientHandlers(t *testing.T) {
 	logBuffer := new(bytes.Buffer)
 	logger.SetOutput(logBuffer)
 
+	repository := core.NewClientFeatureHubRepository(logger)
+
 	// Use the config to make a new StreamingClient with a mock apiClient::
 	client := &StreamingClient{
 		apiClient: &eventsource.Stream{
 			Errors: make(chan error, 100),
 			Events: make(chan eventsource.Event, 100),
 		},
-		config:   config,
-		features: make(map[string]*models.FeatureState),
-		logger:   logger,
+		config:     config,
+		logger:     logger,
+		repository: repository,
 	}
 
 	// Load the mock apiClient up with a "feature" event:
@@ -66,15 +70,15 @@ func TestStreamingClientHandlers(t *testing.T) {
 	}
 
 	// Start handling events:
-	client.Start()
+	client.Connect()
 
 	// Make sure new features with old versions don't clobber values:
-	anotherFeature, err := client.GetFeature("anotherfeature")
+	anotherFeature, err := repository.GetFeature("anotherfeature")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(3), anotherFeature.Version)
 
 	// Make sure features get deleted:
-	deletedFeature, err := client.GetFeature("featuretodelete")
+	deletedFeature, err := repository.GetFeature("featuretodelete")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrFeatureNotFound{}, err)
 	assert.Nil(t, deletedFeature)

@@ -1,8 +1,11 @@
 package streamingclient
 
 import (
+	"bytes"
 	"testing"
+	"time"
 
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/core"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -20,17 +23,21 @@ func (e *testEvent) Event() string { return e.event }
 func (e *testEvent) Id() string    { return e.id }
 
 func TestStreamingClient(t *testing.T) {
-
+	timeout := time.Hour
 	// Make a test config (with an incorrect server address):
-	config := &Config{
+	config := &core.Config{
 		LogLevel:      logrus.FatalLevel,
-		SDKKey:        "default/environment-id/my-secret-api-key",
+		SDKKey:        "environment-id/my-secret-api-key",
 		ServerAddress: "http://streams.test:8086",
-		WaitForData:   true,
+		WaitForData:   &timeout,
 	}
+	logger := logrus.New()
+	logger.SetLevel(logrus.TraceLevel)
+	logBuffer := new(bytes.Buffer)
+	logger.SetOutput(logBuffer)
 
 	// Attempt to make a new client (config has a non-existent hostname):
-	client, err := NewStreamingClient(config)
+	client, err := NewStreamingClient(config, core.NewClientFeatureHubRepository(logger))
 	assert.Error(t, err)
-	assert.Implements(t, new(interfaces.Client), client)
+	assert.Implements(t, new(interfaces.Repository), client)
 }

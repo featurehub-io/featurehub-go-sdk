@@ -1,9 +1,11 @@
-package streamingclient
+package core
 
 import (
 	"testing"
+	"time"
 
-	"github.com/featurehub-io/featurehub-go-sdk/pkg/mocks"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -11,33 +13,39 @@ import (
 
 func TestConfig(t *testing.T) {
 
+	var edgeProvider EdgeProviderFunc
+
+	edgeProvider = func(config *Config, internalRepository interfaces.InternalRepository) (interfaces.EdgeClient, error) {
+		return nil, errors.NewErrBadConfig("no edge required in this test")
+	}
 	// Make sure that our fluent API for NewConfig works as expected:
-	newConfig := NewConfig("myserver", "mySDKKey").WithLogLevel(logrus.WarnLevel).WithWaitForData(true)
+	newConfig := NewConfig("myserver", "mySDKKey", edgeProvider).WithLogLevel(logrus.WarnLevel).WithWaitForData(time.Second)
 	assert.Equal(t, "myserver", newConfig.ServerAddress)
 	assert.Equal(t, "mySDKKey", newConfig.SDKKey)
 	assert.Equal(t, logrus.WarnLevel, newConfig.LogLevel)
-	assert.True(t, newConfig.WaitForData)
+	assert.Equal(t, time.Second, newConfig.WaitForData)
 
 	// Try to connect (it will of course fail):
 	newConfig, err := newConfig.Connect()
 	assert.Error(t, err)
 
-	// Inject a fake client:
-	newConfig.client = new(mocks.FakeClient)
+	var repo = NewClientFeatureHubRepository(newConfig.Logger)
+	// Inject a fake repository:
+	newConfig.repository = repo
+	newConfig.internalRepository = repo
 
 	// Get a context, check that it inherited the correct attributes:
 	newContext := newConfig.NewContext()
-	assert.Equal(t, newConfig.client, newContext.client)
-	assert.Equal(t, newConfig, newContext.config)
+	assert.Equal(t, newConfig.repository, newContext.repository)
 	assert.NotNil(t, newContext.Custom)
 
 	// Now try WithContext:
 	customContext := &models.Context{
 		Userkey: "customContextKey",
 	}
-	withContext := newConfig.WithContext(customContext)
-	assert.Equal(t, newConfig.client, withContext.client)
-	assert.Equal(t, newConfig, withContext.config)
+
+	withContext := newConfig.Context(customContext)
+	assert.Equal(t, newConfig.repository, withContext.repository)
 	assert.Equal(t, "customContextKey", withContext.Userkey)
 }
 
@@ -62,7 +70,7 @@ func TestConfigValidation(t *testing.T) {
 	config.ServerAddress = "http://streams.test:8086"
 
 	// Check that we can build the correct Features URL:
-	featuresURL := config.featuresURL()
+	featuresURL := config.FeaturesURL()
 	assert.Equal(t, "http://streams.test:8086/features/default/environment-id/my-secret-api-key", featuresURL)
 
 	// Now try a valid config:

@@ -1,51 +1,56 @@
-package streamingclient
+package core
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
 
-	"github.com/donovanhide/eventsource"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestStreamingClientFeatures(t *testing.T) {
-
-	// Make a test config (with an incorrect server address):
-	config := &Config{
-		WaitForData: true,
-	}
-
-	// Make a logger:
+func createClient() *ClientFeatureHubRepository {
+	// Make a Logger:
 	logger := logrus.New()
 	logger.SetLevel(logrus.TraceLevel)
 	logBuffer := new(bytes.Buffer)
 	logger.SetOutput(logBuffer)
 
 	// Use the config to make a new StreamingClient with a mock apiClient::
-	client := &StreamingClient{
-		apiClient: &eventsource.Stream{
-			Errors: make(chan error, 100),
-			Events: make(chan eventsource.Event, 100),
-		},
-		config:   config,
-		features: make(map[string]*models.FeatureState),
-		logger:   logger,
-	}
+	return NewClientFeatureHubRepository(logger)
+}
 
-	// Load the mock apiClient up with a "features" event:
-	client.apiClient.Events <- &testEvent{
-		data:  `[{"key":"booleanfeature","type":"BOOLEAN","value":true},{"key":"jsonfeature","type":"JSON","value":"{\"is_crufty\": true}"},{"key":"numberfeature","type":"NUMBER","value":123456789},{"key":"stringfeature","type":"STRING","value":"this is a string"}]`,
-		event: "features",
-	}
+func featuresFromString(data string) ([]*models.FeatureState, error) {
+	var features []*models.FeatureState
+	err := json.Unmarshal([]byte(data), &features)
+	return features, err
+}
 
-	// Start handling events:
-	client.Start()
+func featureFromString(data string) (*models.FeatureState, error) {
+	var features *models.FeatureState
+	err := json.Unmarshal([]byte(data), &features)
+	return features, err
+}
+
+func ffs(data string) *models.FeatureState {
+	var features *models.FeatureState
+	json.Unmarshal([]byte(data), &features)
+	return features
+}
+
+func TestRepositoryFeatures(t *testing.T) {
+	client := createClient()
+
+	var data = `[{"key":"booleanfeature","type":"BOOLEAN","value":true, "version":1},{"key":"jsonfeature","type":"JSON","value":"{\"is_crufty\": true}", "version":1},{"key":"numberfeature","type":"NUMBER","value":123456789, "version":1},{"key":"stringfeature","type":"STRING","value":"this is a string", "version":1}]`
+	features, err := featuresFromString(data)
+	assert.NoError(t, err)
+
+	client.ProcessFeatures(features)
 
 	// Look for a feature that doesn't exist:
-	_, err := client.GetFeature("something-that-does-not-exist")
+	_, err = client.GetFeature("something-that-does-not-exist")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrFeatureNotFound{}, err)
 
@@ -64,12 +69,12 @@ func TestStreamingClientFeatures(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, true, booleanFeature)
 
-	// Look for a json feature that is NOT JSON:
+	// Look for a JSON feature that is NOT JSON:
 	jsonFeature, err := client.GetRawJSON("numberfeature")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrInvalidType{}, err)
 
-	// Look for a json feature that IS json:
+	// Look for a JSON feature that IS JSON:
 	jsonFeature, err = client.GetRawJSON("jsonfeature")
 	assert.NoError(t, err)
 	assert.Equal(t, `{"is_crufty": true}`, jsonFeature)
@@ -93,4 +98,14 @@ func TestStreamingClientFeatures(t *testing.T) {
 	stringFeature, err = client.GetString("stringfeature")
 	assert.NoError(t, err)
 	assert.Equal(t, "this is a string", stringFeature)
+
+	data = `{"key":"booleanfeature","type":"BOOLEAN","value":false,"version":3}`
+	anotherFeature, err := featureFromString(data)
+
+	client.ProcessFeature(anotherFeature)
+
+	booleanFeature, err = client.GetBoolean("booleanfeature")
+	assert.NoError(t, err)
+	assert.Equal(t, true, booleanFeature)
+
 }

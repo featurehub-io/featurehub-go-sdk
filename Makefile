@@ -1,6 +1,6 @@
 mocks:
 	@mkdir -p pkg/mocks
-	@counterfeiter -o pkg/mocks/client.go pkg/interfaces Client
+	@counterfeiter -o pkg/mocks/repository.go . pkg/interfaces/repository.go
 
 test:
 	@go test ./... -cover
