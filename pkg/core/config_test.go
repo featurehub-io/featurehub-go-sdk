@@ -49,6 +49,19 @@ func TestConfig(t *testing.T) {
 	assert.Equal(t, "customContextKey", withContext.Userkey)
 }
 
+func TestClientEvaluated(t *testing.T) {
+	config := &Config{}
+
+	config.SDKKey = "default/environment-id/my-secret-api-key"
+	assert.False(t, config.ClientEvaluated())
+
+	config.SDKKey = "default/environment-id/my-secret-api-key*"
+	assert.True(t, config.ClientEvaluated())
+
+	config.SDKKey = "default/environment-id/*my-secret-api-key"
+	assert.True(t, config.ClientEvaluated())
+}
+
 func TestConfigValidation(t *testing.T) {
 
 	// Make a new config with nothing set:

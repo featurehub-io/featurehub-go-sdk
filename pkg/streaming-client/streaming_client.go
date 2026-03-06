@@ -73,6 +73,11 @@ func NewStreamingClient(config *core.Config, repository interfaces.InternalRepos
 	return client, nil
 }
 
+// streaming client does not support server evaluated SSE
+func (c *StreamingClient) ContextChange(header string) error {
+	return nil
+}
+
 // FatalErrorFunc is called when an unrecoverable asynchronous error is encountered:
 func (c *StreamingClient) fatalErrorFunc(err error, message string, details map[string]interface{}) {
 	c.logger.WithError(err).WithFields(details).Fatal(message)

@@ -194,6 +194,14 @@ func (c *Config) WithWaitForData(value time.Duration) *Config {
 	return c
 }
 
+// ClientEvaluated reports whether this SDK key is a client-evaluated key.
+// Client-evaluated keys contain a "*" and cause the SDK to evaluate rollout
+// strategies locally. Server-evaluated keys do not contain "*" and rely on
+// the server to evaluate strategies per-request.
+func (c *Config) ClientEvaluated() bool {
+	return strings.Contains(c.SDKKey, "*")
+}
+
 // FeaturesURL give us the full URL for receiving features (SSE endpoint):
 func (c *Config) FeaturesURL() string {
 	return fmt.Sprintf("%s/features/%s", c.ServerAddress, c.SDKKey)
