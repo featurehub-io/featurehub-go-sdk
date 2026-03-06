@@ -123,14 +123,15 @@ func (c *FeatureHubPollingClient) Poll() error {
 
 	c.mu.Unlock()
 
-	return c.polling.Poll()
+	c.pollFunc(nil, nil)
+	return nil
 }
 
 // ContextChange updates the x-featurehub context header and triggers an immediate poll.
 // Used for server-side feature evaluation when the user context changes.
-func (c *FeatureHubPollingClient) ContextChange(header string) error {
+func (c *FeatureHubPollingClient) ContextChange(header string) {
 	c.polling.AttributeHeader(header)
-	return c.polling.Poll()
+	c.pollFunc(nil, nil)
 }
 
 // Close stops the polling client and any pending timers.
@@ -159,8 +160,7 @@ func (c *FeatureHubPollingClient) pollFunc(resolve func(), reject func(error)) {
 
 	err := c.polling.Poll()
 	if err != nil {
-		var httpErr *HTTPError
-		if errors.As(err, &httpErr) && (httpErr.StatusCode == 404 || httpErr.StatusCode == 400) {
+		if httpErr, ok := errors.AsType[*HTTPError](err); ok && (httpErr.StatusCode == 404 || httpErr.StatusCode == 400) {
 			// Fatal: the API key is invalid or not found — stop polling.
 			if httpErr.StatusCode == 404 {
 				c.logger.Error("The API key provided does not exist, stopping polling.")

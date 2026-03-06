@@ -12,9 +12,6 @@ make test
 # Run a single test
 go test ./pkg/core/ -run TestName -v
 
-# Generate mocks (requires counterfeiter)
-make mocks
-
 # Build everything
 go build ./...
 ```
@@ -41,7 +38,6 @@ This is a Go client SDK for FeatureHub, a feature management platform. The SDK c
 - **`pkg/polling-client/`**: HTTP polling `EdgeClient` implementation. `FeatureHubPollingClient` supports active (timer-based) and passive (cache-expiry-based) modes. `PollingBase` handles the low-level HTTP GET mechanics (etag, cache-control, SHA-256 context header hashing, concurrent-caller coalescing).
 - **`pkg/strategies/`**: Client-side rollout strategy matchers for boolean, number, string, semver, date, datetime, and IP address attribute types.
 - **`pkg/errors/`**: Typed errors: `ErrBadConfig`, `ErrFeatureNotFound`, `ErrInvalidType`, `ErrNotifierNotFound`, `ErrFromAPI`, `ErrFeatureIsWrongType`, `ErrInvalidNotifierCallback`.
-- **`pkg/mocks/`**: Generated mocks (via `make mocks` using `counterfeiter` from `pkg/interfaces/repository.go`). Do not edit manually.
 
 ### Connection Flow
 

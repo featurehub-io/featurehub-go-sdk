@@ -2,5 +2,5 @@ package interfaces
 
 type EdgeClient interface {
 	Connect()
-	ContextChange(header string) error
+	ContextChange(header string)
 }
