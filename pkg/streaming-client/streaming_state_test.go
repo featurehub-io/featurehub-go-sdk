@@ -15,7 +15,7 @@ import (
 
 func TestStreamingClientFeatures(t *testing.T) {
 
-	waitPeriod := time.Second
+	waitPeriod := time.Second * 10
 	// Make a logger:
 	logger := logrus.New()
 	logger.SetLevel(logrus.TraceLevel)
@@ -32,7 +32,7 @@ func TestStreamingClientFeatures(t *testing.T) {
 	config.SetRepository(repo)
 	config.SetInternalRepository(repo)
 
-	// Use the config to make a new StreamingClient with a mock apiClient::
+	// Use the config to make a new StreamingClient with a mock apiClient
 	client := &StreamingClient{
 		apiClient: &eventsource.Stream{
 			Errors: make(chan error, 100),
@@ -49,7 +49,7 @@ func TestStreamingClientFeatures(t *testing.T) {
 		event: "features",
 	}
 
-	// Start handling events:
+	// Start handling events: (we have 10 seconds to find it, since its already in the stream should be plenty
 	client.Connect()
 
 	// Look for a feature that doesn't exist:

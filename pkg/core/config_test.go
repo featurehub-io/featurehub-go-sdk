@@ -44,7 +44,7 @@ func TestConfig(t *testing.T) {
 		Userkey: "customContextKey",
 	}
 
-	withContext := newConfig.Context(customContext)
+	withContext := newConfig.WithContext(customContext)
 	assert.Equal(t, newConfig.repository, withContext.repository)
 	assert.Equal(t, "customContextKey", withContext.Userkey)
 }

@@ -101,13 +101,6 @@ func (c *Config) NewContext() *ClientWithContext {
 	}
 }
 
-func (c *Config) Context(ctx *models.Context) *ClientWithContext {
-	return &ClientWithContext{
-		Context:    ctx,
-		repository: c.Repository(),
-	}
-}
-
 func (c *Config) Repository() interfaces.Repository {
 	if c.repository != nil && c.internalRepository != nil {
 		return c.repository
@@ -159,10 +152,12 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// WithContext Replica of Context
-// Deprecated: Use Context instead
+// WithContext Create a new context with passed context
 func (c *Config) WithContext(context *models.Context) *ClientWithContext {
-	return c.Context(context)
+	return &ClientWithContext{
+		Context:    context,
+		repository: c.Repository(),
+	}
 }
 
 // WithFatalErrorHandler configures an error handler which will be called for asynchronous fatal errors:

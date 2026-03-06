@@ -58,7 +58,7 @@ func (c *StreamingClient) handleEvents() {
 			feature := &models.FeatureState{}
 			if err := json.Unmarshal([]byte(event.Data()), feature); err != nil {
 				c.logger.WithError(err).WithField("event", "feature").Error("Error unmarshaling SSE payload")
-				return
+				continue
 			}
 
 			c.repository.ProcessDeleteFeature(feature)
@@ -76,7 +76,7 @@ func (c *StreamingClient) handleEvents() {
 			feature := &models.FeatureState{}
 			if err := json.Unmarshal([]byte(event.Data()), feature); err != nil {
 				c.logger.WithError(err).WithField("event", "feature").Error("Error unmarshaling SSE payload")
-				return
+				continue
 			}
 
 			c.repository.ProcessFeature(feature)
