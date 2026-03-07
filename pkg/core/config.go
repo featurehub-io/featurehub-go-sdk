@@ -24,19 +24,17 @@ type EdgeType string
 
 // Config defines parameters for the repository:
 type Config struct {
-	LogLevel           logrus.Level // Logging level (default is "info")
-	Logger             *logrus.Logger
-	SDKKey             string                      // SDK key (copied from the UI), in the format "{namedCache}/environmentID/APIKey"
-	ServerAddress      string                      // FeatureHub API endpoint
-	WaitForData        *time.Duration              // if set, how long a repository will wait before aborting connection attempt
-	_repository        *ClientFeatureHubRepository // A FeatureHub repository implementation
-	internalRepository interfaces.InternalRepository
-	repository         interfaces.Repository
-	EdgeProvider       EdgeProviderFunc
-	fatalErrorHandler  *interfaces.ErrorFunc // A user-provided handler func for fatal asynchronous errors
-	RequestedEdgeType  EdgeType              // used to determine which edge repository we should use
-	timeout            time.Duration         // timeout if using polling
-	client             interfaces.EdgeClient
+	LogLevel          logrus.Level // Logging level (default is "info")
+	Logger            *logrus.Logger
+	SDKKey            string                      // SDK key (copied from the UI), in the format "{namedCache}/environmentID/APIKey"
+	ServerAddress     string                      // FeatureHub API endpoint
+	WaitForData       *time.Duration              // if set, how long a repository will wait before aborting connection attempt
+	repository        *ClientFeatureHubRepository // A FeatureHub repository implementation
+	EdgeProvider      EdgeProviderFunc
+	fatalErrorHandler *interfaces.ErrorFunc // A user-provided handler func for fatal asynchronous errors
+	RequestedEdgeType EdgeType              // used to determine which edge repository we should use
+	timeout           time.Duration         // timeout if using polling
+	client            interfaces.EdgeClient
 }
 
 // NewConfig returns a configured Config:
@@ -69,12 +67,8 @@ func NewConfig(serverAddress, sdkKey string, edgeProvider EdgeProviderFunc) *Con
 	}
 }
 
-func (c *Config) SetRepository(repository interfaces.Repository) {
+func (c *Config) SetRepository(repository *ClientFeatureHubRepository) {
 	c.repository = repository
-}
-
-func (c *Config) SetInternalRepository(repository interfaces.InternalRepository) {
-	c.internalRepository = repository
 }
 
 func (c *Config) PassiveRest(interval time.Duration) {
@@ -113,33 +107,27 @@ func (c *Config) NewContext() *ClientWithContext {
 		Context: &models.Context{
 			Custom: make(map[string]interface{}),
 		},
-		repository: c.Repository(),
+		repository:        c.repository,
+		featureRepository: c.repository,
 	}
 }
 
 func (c *Config) Repository() interfaces.Repository {
-	if c.repository != nil && c.internalRepository != nil {
-		return c.repository
-	}
-	if c._repository == nil {
-		c._repository = NewClientFeatureHubRepository(c.Logger)
+	if c.repository == nil {
+		c.repository = NewClientFeatureHubRepository(c.Logger)
 	}
 
-	return c._repository
+	return c.repository
 }
 
 // ensures the repositories are all set correctly and returns the internal one. for use by edge clients to
 // push data into the repository
 func (c *Config) checkRepository() interfaces.InternalRepository {
-	if c.repository != nil && c.internalRepository != nil {
-		return c.internalRepository
+	if c.repository == nil {
+		c.repository = NewClientFeatureHubRepository(c.Logger)
 	}
 
-	if c._repository == nil {
-		c._repository = NewClientFeatureHubRepository(c.Logger)
-	}
-
-	return c._repository
+	return c.repository
 }
 
 // Validate can be called to check various config options:
@@ -192,6 +180,11 @@ func (c *Config) WithLogLevel(logLevel logrus.Level) *Config {
 func (c *Config) WithWaitForData(value time.Duration) *Config {
 	c.WaitForData = &value
 	return c
+}
+
+func (c *Config) AddValueInterceptor(valueInterceptor interfaces.FeatureValueInterceptor) {
+	c.checkRepository()
+	c.repository.AddValueInterceptor(valueInterceptor)
 }
 
 // ClientEvaluated reports whether this SDK key is a client-evaluated key.

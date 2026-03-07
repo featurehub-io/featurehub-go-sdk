@@ -14,7 +14,7 @@ func NewErrInvalidNotifierCallback(message string) *ErrInvalidNotifierCallback {
 
 func (e *ErrInvalidNotifierCallback) Error() string {
 	if e.message != "" {
-		return fmt.Sprintf("Notifier not found: %s", e.message)
+		return fmt.Sprintf("Invalid notifier callback: %s", e.message)
 	}
-	return "Notifier not found"
+	return "Invalid notifier callback"
 }

@@ -1,7 +1,6 @@
 package core
 
 import (
-	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 )
@@ -9,7 +8,8 @@ import (
 // ClientWithContext bundles a Context with a repository:
 type ClientWithContext struct {
 	*models.Context
-	repository interfaces.Repository
+	repository        interfaces.Repository
+	featureRepository interfaces.FeatureRepository
 }
 
 func (cc *ClientWithContext) Attributes() *models.Context {
@@ -21,141 +21,95 @@ func (cc *ClientWithContext) Repository() interfaces.Repository {
 	return cc.repository
 }
 
-// GetFeature searches for a feature by key:
-func (cc *ClientWithContext) GetFeature(key string) (*models.FeatureState, error) {
-	return cc.repository.GetFeature(key)
-}
-
 // GetBoolean searches for a feature by key, returns the value as a boolean:
 func (cc *ClientWithContext) GetBoolean(key string) (bool, error) {
-
 	// Use the existing GetFeature method:
-	fs, err := cc.repository.GetFeature(key)
+	fs, matched, value, err := cc.featureRepository.GetInternalBoolean(key, false)
 	if err != nil {
 		return false, err
 	}
 
-	// Make sure the feature is the correct type:
-	if fs.Type != models.TypeBoolean {
-		return false, errors.NewErrInvalidType(string(fs.Type))
+	// it was overridden, so return that
+	if matched {
+		return value, nil
 	}
 
-	// Assert the value:
-	defaultValue, ok := fs.Value.(bool)
-	if !ok {
-		return false, errors.NewErrInvalidType("Unable to assert value as a bool")
-	}
-
-	// Figure out which value to use:
-	if calculatedValue := fs.Strategies.Calculate(cc.Context); calculatedValue != nil {
-
-		// Assert the value:
-		if strategyValue, ok := calculatedValue.(bool); ok {
-			return strategyValue, nil
+	if fs != nil {
+		// Figure out which value to use:
+		if calculatedValue := fs.Strategies.Calculate(cc.Context); calculatedValue != nil {
+			// Assert the value:
+			if strategyValue, ok := calculatedValue.(bool); ok {
+				return strategyValue, nil
+			}
 		}
 	}
 
 	// Return the default value as a fall-back:
-	return defaultValue, nil
+	return value, nil
 }
 
 // GetNumber searches for a feature by key, returns the value as a float64:
 func (cc *ClientWithContext) GetNumber(key string) (float64, error) {
 
-	// Use the existing GetFeature method:
-	fs, err := cc.repository.GetFeature(key)
+	fs, matched, value, err := cc.featureRepository.GetInternalNumber(key, false)
 	if err != nil {
 		return 0, err
 	}
 
-	// Make sure the feature is the correct type:
-	if fs.Type != models.TypeNumber {
-		return 0, errors.NewErrInvalidType(string(fs.Type))
+	// it was overridden, so return that
+	if matched {
+		return value, nil
 	}
 
-	// Assert the value:
-	defaultValue, ok := fs.Value.(float64)
-	if !ok {
-		return 0, errors.NewErrInvalidType("Unable to assert value as a float64")
-	}
+	if fs != nil {
+		// Figure out which value to use:
+		if calculatedValue := fs.Strategies.Calculate(cc.Context); calculatedValue != nil {
 
-	// Figure out which value to use:
-	if calculatedValue := fs.Strategies.Calculate(cc.Context); calculatedValue != nil {
-
-		// Assert the value:
-		if strategyValue, ok := calculatedValue.(float64); ok {
-			return strategyValue, nil
+			// Assert the value:
+			if strategyValue, ok := calculatedValue.(float64); ok {
+				return strategyValue, nil
+			}
 		}
 	}
 
 	// Return the default value as a fall-back:
-	return defaultValue, nil
+	return value, nil
 }
 
-// GetRawJSON searches for a feature by key, returns the value as a JSON string:
-func (cc *ClientWithContext) GetRawJSON(key string) (string, error) {
-
-	// Use the existing GetFeature method:
-	fs, err := cc.repository.GetFeature(key)
+func (cc *ClientWithContext) getContextString(key string, valueType models.FeatureValueType) (string, error) {
+	fs, matched, value, err := cc.featureRepository.GetInternalString(key, false, valueType)
 	if err != nil {
 		return "{}", err
 	}
 
-	// Make sure the feature is the correct type:
-	if fs.Type != models.TypeJSON {
-		return "{}", errors.NewErrInvalidType(string(fs.Type))
+	// it was overridden, so return that
+	if matched {
+		return value, nil
 	}
 
-	// Assert the value:
-	defaultValue, ok := fs.Value.(string)
-	if !ok {
-		return "{}", errors.NewErrInvalidType("Unable to assert value as a string")
-	}
+	if fs != nil {
+		// Figure out which value to use:
+		if calculatedValue := fs.Strategies.Calculate(cc.Context); calculatedValue != nil {
 
-	// Figure out which value to use:
-	if calculatedValue := fs.Strategies.Calculate(cc.Context); calculatedValue != nil {
-
-		// Assert the value:
-		if strategyValue, ok := calculatedValue.(string); ok {
-			return strategyValue, nil
+			// Assert the value:
+			if strategyValue, ok := calculatedValue.(string); ok {
+				return strategyValue, nil
+			}
 		}
 	}
 
 	// Return the default value as a fall-back:
-	return defaultValue, nil
+	return value, nil
+}
+
+// GetRawJSON searches for a feature by key, returns the value as a JSON string:
+func (cc *ClientWithContext) GetRawJSON(key string) (string, error) {
+	return cc.getContextString(key, models.TypeJSON)
 }
 
 // GetString searches for a feature by key, returns the value as a string:
 func (cc *ClientWithContext) GetString(key string) (string, error) {
-
-	// Use the existing GetFeature method:
-	fs, err := cc.repository.GetFeature(key)
-	if err != nil {
-		return "", err
-	}
-
-	// Make sure the feature is the correct type:
-	if fs.Type != models.TypeString {
-		return "", errors.NewErrInvalidType(string(fs.Type))
-	}
-
-	// Assert the value:
-	defaultValue, ok := fs.Value.(string)
-	if !ok {
-		return "", errors.NewErrInvalidType("Unable to assert value as a string")
-	}
-
-	// Figure out which value to use:
-	if calculatedValue := fs.Strategies.Calculate(cc.Context); calculatedValue != nil {
-
-		// Assert the value:
-		if strategyValue, ok := calculatedValue.(string); ok {
-			return strategyValue, nil
-		}
-	}
-
-	// Return the default value as a fall-back:
-	return defaultValue, nil
+	return cc.getContextString(key, models.TypeString)
 }
 
 func (cc *ClientWithContext) IsReady() bool {
@@ -167,8 +121,9 @@ func (cc *ClientWithContext) IsReady() bool {
 // - the context is replaced with the one provided
 func (cc *ClientWithContext) WithContext(context *models.Context) interfaces.Context {
 	return &ClientWithContext{
-		Context:    context,
-		repository: cc.repository,
+		Context:           context,
+		repository:        cc.repository,
+		featureRepository: cc.featureRepository,
 	}
 }
 

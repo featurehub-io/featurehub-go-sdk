@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
@@ -20,6 +21,7 @@ type ClientFeatureHubRepository struct {
 	notifiers         notifiers
 	notifiersMutex    sync.Mutex
 	readinessListener func()
+	valueInterceptors []interfaces.FeatureValueInterceptor
 }
 
 func NewClientFeatureHubRepository(logger *logrus.Logger) *ClientFeatureHubRepository {
@@ -59,59 +61,130 @@ func (r *ClientFeatureHubRepository) isReady() {
 
 func (r *ClientFeatureHubRepository) WithContext(context *models.Context) interfaces.Context {
 	return &ClientWithContext{
-		Context:    context,
-		repository: r,
+		Context:           context,
+		repository:        r,
+		featureRepository: r,
 	}
 }
 
+func (r *ClientFeatureHubRepository) AddValueInterceptor(valueInterceptor interfaces.FeatureValueInterceptor) {
+	if r.valueInterceptors == nil {
+		r.valueInterceptors = make([]interfaces.FeatureValueInterceptor, 0)
+	}
+
+	r.valueInterceptors = append(r.valueInterceptors, valueInterceptor)
+}
+
 // GetFeature searches for a feature by key:
-func (r *ClientFeatureHubRepository) GetFeature(key string) (*models.FeatureState, error) {
+func (r *ClientFeatureHubRepository) GetFeature(key string, recordUsage bool) (feature *models.FeatureState, matched bool, value interface{}, err error) {
 	r.featuresMutex.Lock()
 	defer r.featuresMutex.Unlock()
 
-	if feature, ok := r.features[key]; ok {
+	feature, ok := r.features[key]
+
+	// regardless of whether we found it or not, we need to walk the interceptors passing what we found
+	if r.valueInterceptors != nil {
+		for _, valueInterceptor := range r.valueInterceptors {
+			if matched, value := valueInterceptor(key, feature); matched {
+				r.logger.WithField("key", key).Trace("Found matching interceptor")
+				return feature, matched, value, nil
+			}
+		}
+	}
+
+	if ok {
 		r.logger.WithField("key", key).Trace("Found feature")
-		return feature, nil
+		return feature, false, feature.Value, nil
 	}
 
 	r.logger.WithField("key", key).Trace("Feature not found")
-	return nil, errors.NewErrFeatureNotFound(key)
+	return nil, false, nil, errors.NewErrFeatureNotFound(key)
+}
+
+func (r *ClientFeatureHubRepository) GetInternalBoolean(key string, recordUsage bool) (feature *models.FeatureState, matched bool, value bool, err error) {
+	fs, matched, valueRaw, err := r.GetFeature(key, recordUsage)
+
+	if err != nil {
+		return fs, matched, false, err
+	}
+	if fs != nil && fs.Type != models.TypeBoolean {
+		return fs, matched, false, errors.NewErrInvalidType(string(fs.Type))
+	}
+
+	if value, ok := valueRaw.(bool); ok {
+		return fs, matched, value, nil
+	}
+
+	if valueStr, okStr := valueRaw.(string); okStr {
+		p, e := strconv.ParseBool(valueStr)
+		return fs, matched, p, e
+	}
+
+	return fs, matched, false, errors.NewErrInvalidType(key)
 }
 
 // GetBoolean searches for a feature by key, returns the value as a boolean:
 func (r *ClientFeatureHubRepository) GetBoolean(key string) (bool, error) {
-	feature, err := r.GetFeature(key)
+	_, _, value, err := r.GetInternalBoolean(key, true)
+	return value, err
+}
+
+func (r *ClientFeatureHubRepository) GetInternalNumber(key string, recordUsage bool) (feature *models.FeatureState, matched bool, value float64, err error) {
+	fs, matched, valueRaw, err := r.GetFeature(key, recordUsage)
+
 	if err != nil {
-		return false, err
+		return fs, matched, 0, err
 	}
-	return feature.AsBoolean()
+
+	if fs != nil && fs.Type != models.TypeNumber {
+		return fs, matched, 0, errors.NewErrInvalidType(string(fs.Type))
+	}
+
+	if value, ok := valueRaw.(float64); ok {
+		return fs, matched, value, nil
+	}
+
+	if valueStr, okStr := valueRaw.(string); okStr {
+		float, ferr := strconv.ParseFloat(valueStr, 64)
+		return fs, matched, float, ferr
+	}
+
+	return fs, matched, 0, errors.NewErrInvalidType(key)
 }
 
 // GetNumber searches for a feature by key, returns the value as a float64:
 func (r *ClientFeatureHubRepository) GetNumber(key string) (float64, error) {
-	feature, err := r.GetFeature(key)
+	_, _, value, err := r.GetInternalNumber(key, true)
+	return value, err
+}
+
+func (r *ClientFeatureHubRepository) GetInternalString(key string, recordUsage bool, expectedType models.FeatureValueType) (feature *models.FeatureState, matched bool, value string, err error) {
+	fs, matched, valueRaw, err := r.GetFeature(key, recordUsage)
+
 	if err != nil {
-		return 0, err
+		return fs, matched, "", err
 	}
-	return feature.AsNumber()
+	if fs != nil && fs.Type != expectedType {
+		return fs, matched, "", errors.NewErrInvalidType(string(fs.Type))
+	}
+
+	if valueStr, okStr := valueRaw.(string); okStr {
+		return fs, matched, valueStr, nil
+	}
+
+	return fs, matched, "", errors.NewErrInvalidType(key)
 }
 
 // GetRawJSON searches for a feature by key, returns the value as a JSON string:
 func (r *ClientFeatureHubRepository) GetRawJSON(key string) (string, error) {
-	feature, err := r.GetFeature(key)
-	if err != nil {
-		return "{}", err
-	}
-	return feature.AsRawJSON()
+	_, _, value, err := r.GetInternalString(key, true, models.TypeJSON)
+	return value, err
 }
 
 // GetString searches for a feature by key, returns the value as a string:
 func (r *ClientFeatureHubRepository) GetString(key string) (string, error) {
-	feature, err := r.GetFeature(key)
-	if err != nil {
-		return "", err
-	}
-	return feature.AsString()
+	_, _, value, err := r.GetInternalString(key, true, models.TypeString)
+	return value, err
 }
 
 func (r *ClientFeatureHubRepository) AddNotifierFeature(featureKey string, callbackFunc models.CallbackFuncFeature) (string, error) {
@@ -177,7 +250,7 @@ func (r *ClientFeatureHubRepository) AddNotifierString(featureKey string, callba
 // for historical reasons we can attach to features we don't have, but it means more checking when we do the  triggering
 // that we have the right feature type that matches the right notifier callback (see notify function)
 func (r *ClientFeatureHubRepository) addNotifier(newNotifier notifier, expectedValueType models.FeatureValueType) (string, error) {
-	feature, _ := r.GetFeature(newNotifier.getKey())
+	feature, _, _, _ := r.GetFeature(newNotifier.getKey(), false)
 
 	if feature != nil && expectedValueType != models.TypeFeature && feature.Type != expectedValueType {
 		return "", errors.NewErrInvalidType("feature is not expected type")
