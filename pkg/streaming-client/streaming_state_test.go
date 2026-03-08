@@ -30,7 +30,6 @@ func TestStreamingClientFeatures(t *testing.T) {
 
 	repo := core.NewClientFeatureHubRepository(logger)
 	config.SetRepository(repo)
-	config.SetInternalRepository(repo)
 
 	// Use the config to make a new StreamingClient with a mock apiClient
 	client := &StreamingClient{
@@ -53,12 +52,12 @@ func TestStreamingClientFeatures(t *testing.T) {
 	client.Connect()
 
 	// Look for a feature that doesn't exist:
-	_, err := repo.GetFeature("something-that-does-not-exist")
+	_, _, _, err := repo.GetFeature("something-that-does-not-exist", false)
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrFeatureNotFound{}, err)
 
 	// Look for a feature that DOES exist:
-	feature, err := repo.GetFeature("stringfeature")
+	feature, _, _, err := repo.GetFeature("stringfeature", false)
 	assert.NoError(t, err)
 	assert.Equal(t, models.FeatureValueType("STRING"), feature.Type)
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func TestRepositoryNotifiers(t *testing.T) {
-	repository := createClient()
+	repository := createRepository()
 
 	features, err := featuresFromString(`[{"key":"feature1","type":"NUMBER","value":2}]`)
 	assert.NoError(t, err)

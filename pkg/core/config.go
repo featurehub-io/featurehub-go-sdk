@@ -86,6 +86,18 @@ func (c *Config) Streaming() {
 	c.timeout = time.Millisecond * 0
 }
 
+// IsReady - Is the repository ready, does it have its initial state?
+// delegates to the internal repository
+func (c *Config) IsReady() bool {
+	return c.checkRepository().IsReady()
+}
+
+// ReadinessListener - Configure the SDK with a function to call when we're ready (up and running with some data)
+// delegates to the internal repository
+func (c *Config) ReadinessListener(callbackFunc func()) {
+	c.checkRepository().ReadinessListener(callbackFunc)
+}
+
 // Connect prepares a repository and connects to the configured FH server:
 func (c *Config) Connect() (*Config, error) {
 	provider, err := c.EdgeProvider(c, c.checkRepository())
@@ -110,14 +122,6 @@ func (c *Config) NewContext() *ClientWithContext {
 		repository:        c.repository,
 		featureRepository: c.repository,
 	}
-}
-
-func (c *Config) Repository() interfaces.Repository {
-	if c.repository == nil {
-		c.repository = NewClientFeatureHubRepository(c.Logger)
-	}
-
-	return c.repository
 }
 
 // ensures the repositories are all set correctly and returns the internal one. for use by edge clients to
@@ -159,8 +163,9 @@ func (c *Config) Validate() error {
 // WithContext Create a new context with passed context
 func (c *Config) WithContext(context *models.Context) *ClientWithContext {
 	return &ClientWithContext{
-		Context:    context,
-		repository: c.Repository(),
+		Context:           context,
+		repository:        c.repository,
+		featureRepository: c.repository,
 	}
 }
 

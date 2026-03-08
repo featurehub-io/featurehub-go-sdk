@@ -8,7 +8,7 @@ import (
 // ClientWithContext bundles a Context with a repository:
 type ClientWithContext struct {
 	*models.Context
-	repository        interfaces.Repository
+	repository        interfaces.RepositoryContext
 	featureRepository interfaces.FeatureRepository
 }
 
@@ -17,7 +17,7 @@ func (cc *ClientWithContext) Attributes() *models.Context {
 }
 
 // Repository provides access to the repository:
-func (cc *ClientWithContext) Repository() interfaces.Repository {
+func (cc *ClientWithContext) Repository() interfaces.RepositoryContext {
 	return cc.repository
 }
 
@@ -112,10 +112,6 @@ func (cc *ClientWithContext) GetString(key string) (string, error) {
 	return cc.getContextString(key, models.TypeString)
 }
 
-func (cc *ClientWithContext) IsReady() bool {
-	return cc.repository.IsReady()
-}
-
 // WithContext returns a new clientWithContext:
 // - the underlying repository is inherited
 // - the context is replaced with the one provided
@@ -154,9 +150,4 @@ func (cc *ClientWithContext) AddNotifierString(featureKey string, callbackFunc m
 // DeleteNotifier removes a previously configured notifier (by key and UUID, because we support more than one notifier per key):
 func (cc *ClientWithContext) DeleteNotifier(featureKey, notifierUUID string) error {
 	return cc.repository.DeleteNotifier(featureKey, notifierUUID)
-}
-
-// ReadinessListener adds a function which will be called when the repository is ready:
-func (cc *ClientWithContext) ReadinessListener(callbackFunc func()) {
-	cc.repository.ReadinessListener(callbackFunc)
 }

@@ -30,9 +30,8 @@ func TestConfig(t *testing.T) {
 	assert.Error(t, err)
 
 	var repo = NewClientFeatureHubRepository(newConfig.Logger)
-	// Inject a fake repository:
-	newConfig.repository = repo
-	newConfig.internalRepository = repo
+
+	newConfig.SetRepository(repo)
 
 	// Get a context, check that it inherited the correct attributes:
 	newContext := newConfig.NewContext()

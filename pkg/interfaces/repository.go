@@ -4,6 +4,9 @@ import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 )
 
+// RepositoryContext - this is the main interface used for requesting features, and it
+// is implemented by the main repository as well as the contexts. A context allows strategies to be
+// applied, whereas requesting features directly from the repository does not allow this.
 type RepositoryContext interface {
 	AddNotifierBoolean(featureKey string, callbackFunc models.CallbackFuncBoolean) (notifierUUID string, err error) // Configure a notifier for a BOOLEAN value:
 	AddNotifierJSON(featureKey string, callbackFunc models.CallbackFuncJSON) (notifierUUID string, err error)       // Configure a notifier for a JSON value:
@@ -29,23 +32,18 @@ type FeatureRepository interface {
 
 type Context interface {
 	RepositoryContext
+	// Attributes - allows you to get the existing attributes for evaluation
 	Attributes() *models.Context
-	Repository() Repository
+	// WithContext - replaces the existing context with this new one
 	WithContext(ctx *models.Context) Context
-}
-
-// Repository for FeatureHub:
-type Repository interface {
-	RepositoryContext
-	ReadinessListener(callbackFunc func()) // Configure the SDK with a function to call when we're ready (up and running with some data)
-	IsReady() bool                         // Is the repository ready, does it have its initial state?
-	WithContext(context *models.Context) Context
-	AddValueInterceptor(valueInterceptor FeatureValueInterceptor)
 }
 
 type InternalRepository interface {
 	ProcessFeature(feature *models.FeatureState)
 	ProcessFeatures(features []*models.FeatureState)
 	ProcessDeleteFeature(feature *models.FeatureState)
-	IsReady() bool // Is the repository ready, does it have its initial state?
+	AddValueInterceptor(valueInterceptor FeatureValueInterceptor)
+	WithContext(context *models.Context) Context
+	IsReady() bool                         // Is the repository ready, does it have its initial state?
+	ReadinessListener(callbackFunc func()) // Configure the SDK with a function to call when we're ready (up and running with some data)
 }
