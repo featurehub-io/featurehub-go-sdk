@@ -130,12 +130,11 @@ func (r *ClientFeatureHubRepository) GetBoolean(key string) (bool, error) {
 }
 
 func (r *ClientFeatureHubRepository) GetInternalNumber(key string, recordUsage bool) (feature *models.FeatureState, matched bool, value float64, err error) {
-	fs, matched, valueRaw, err := r.GetFeature(key, recordUsage)
+	fs, matched, valueRaw, err := r.GetFeature(key, true)
 
 	if err != nil {
 		return fs, matched, 0, err
 	}
-
 	if fs != nil && fs.Type != models.TypeNumber {
 		return fs, matched, 0, errors.NewErrInvalidType(string(fs.Type))
 	}
@@ -164,8 +163,9 @@ func (r *ClientFeatureHubRepository) GetInternalString(key string, recordUsage b
 	if err != nil {
 		return fs, matched, "", err
 	}
+
 	if fs != nil && fs.Type != expectedType {
-		return fs, matched, "", errors.NewErrInvalidType(string(fs.Type))
+		return fs, matched, "", errors.NewErrInvalidType(string(expectedType))
 	}
 
 	if valueStr, okStr := valueRaw.(string); okStr {
@@ -356,9 +356,7 @@ func (r *ClientFeatureHubRepository) notify(feature *models.FeatureState) error 
 
 	featureKeyNotifiers, featureKeyExists := r.notifiers[feature.Key]
 	if !featureKeyExists {
-		err := errors.NewErrNotifierNotFound(feature.Key)
-		r.logger.WithError(err).WithField("key", feature.Key).Trace("Attempt to call a notifier that doesn't exist")
-		return err
+		return nil
 	}
 
 	for _, notifier := range featureKeyNotifiers {

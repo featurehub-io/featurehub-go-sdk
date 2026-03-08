@@ -71,19 +71,22 @@ func (c *Config) SetRepository(repository *ClientFeatureHubRepository) {
 	c.repository = repository
 }
 
-func (c *Config) PassiveRest(interval time.Duration) {
+func (c *Config) PassiveRest(interval time.Duration) *Config {
 	c.RequestedEdgeType = EdgePassiveRest
 	c.timeout = interval
+	return c
 }
 
-func (c *Config) ActiveRest(timeout time.Duration) {
+func (c *Config) ActiveRest(timeout time.Duration) *Config {
 	c.RequestedEdgeType = EdgeActiveRest
 	c.timeout = timeout
+	return c
 }
 
-func (c *Config) Streaming() {
+func (c *Config) Streaming() *Config {
 	c.RequestedEdgeType = EdgeStreaming
 	c.timeout = time.Millisecond * 0
+	return c
 }
 
 // IsReady - Is the repository ready, does it have its initial state?
