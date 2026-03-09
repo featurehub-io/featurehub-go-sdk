@@ -1,8 +1,11 @@
 package core
 
 import (
+	"maps"
+
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/usage"
 )
 
 // ClientWithContext bundles a Context with a repository:
@@ -19,6 +22,30 @@ func (cc *ClientWithContext) Attributes() *models.Context {
 // Repository provides access to the repository:
 func (cc *ClientWithContext) Repository() interfaces.RepositoryContext {
 	return cc.repository
+}
+
+func (cc *ClientWithContext) Number(featureKey string) float64 {
+	if f, err := cc.GetNumber(featureKey); err != nil || f == nil {
+		return 0.0
+	} else {
+		return *f
+	}
+}
+
+func (cc *ClientWithContext) JSON(featureKey string) string {
+	if f, err := cc.GetRawJSON(featureKey); err != nil || f == nil {
+		return "{}"
+	} else {
+		return *f
+	}
+}
+
+func (cc *ClientWithContext) String(featureKey string) string {
+	if f, err := cc.GetString(featureKey); err != nil || f == nil {
+		return ""
+	} else {
+		return *f
+	}
 }
 
 // GetBoolean searches for a feature by key, returns the value as a boolean:
@@ -49,16 +76,11 @@ func (cc *ClientWithContext) GetBoolean(key string) (bool, error) {
 }
 
 // GetNumber searches for a feature by key, returns the value as a float64:
-func (cc *ClientWithContext) GetNumber(key string) (float64, error) {
-
+func (cc *ClientWithContext) GetNumber(key string) (*float64, error) {
 	fs, matched, value, err := cc.featureRepository.GetInternalNumber(key, false)
-	if err != nil {
-		return 0, err
-	}
 
-	// it was overridden, so return that
-	if matched {
-		return value, nil
+	if matched || err != nil {
+		return value, err
 	}
 
 	if fs != nil {
@@ -67,7 +89,7 @@ func (cc *ClientWithContext) GetNumber(key string) (float64, error) {
 
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(float64); ok {
-				return strategyValue, nil
+				return &strategyValue, nil
 			}
 		}
 	}
@@ -76,15 +98,12 @@ func (cc *ClientWithContext) GetNumber(key string) (float64, error) {
 	return value, nil
 }
 
-func (cc *ClientWithContext) getContextString(key string, valueType models.FeatureValueType) (string, error) {
+func (cc *ClientWithContext) getContextString(key string, valueType models.FeatureValueType) (*string, error) {
 	fs, matched, value, err := cc.featureRepository.GetInternalString(key, false, valueType)
-	if err != nil {
-		return "{}", err
-	}
 
-	// it was overridden, so return that
-	if matched {
-		return value, nil
+	// if matched, err will be nil
+	if matched || err != nil {
+		return value, err
 	}
 
 	if fs != nil {
@@ -93,7 +112,7 @@ func (cc *ClientWithContext) getContextString(key string, valueType models.Featu
 
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(string); ok {
-				return strategyValue, nil
+				return &strategyValue, nil
 			}
 		}
 	}
@@ -103,12 +122,12 @@ func (cc *ClientWithContext) getContextString(key string, valueType models.Featu
 }
 
 // GetRawJSON searches for a feature by key, returns the value as a JSON string:
-func (cc *ClientWithContext) GetRawJSON(key string) (string, error) {
+func (cc *ClientWithContext) GetRawJSON(key string) (*string, error) {
 	return cc.getContextString(key, models.TypeJSON)
 }
 
 // GetString searches for a feature by key, returns the value as a string:
-func (cc *ClientWithContext) GetString(key string) (string, error) {
+func (cc *ClientWithContext) GetString(key string) (*string, error) {
 	return cc.getContextString(key, models.TypeString)
 }
 
@@ -150,4 +169,108 @@ func (cc *ClientWithContext) AddNotifierString(featureKey string, callbackFunc m
 // DeleteNotifier removes a previously configured notifier (by key and UUID, because we support more than one notifier per key):
 func (cc *ClientWithContext) DeleteNotifier(featureKey, notifierUUID string) error {
 	return cc.repository.DeleteNotifier(featureKey, notifierUUID)
+}
+
+func (cc *ClientWithContext) used(key string, id string, value interface{}, valueType models.FeatureValueType) {
+
+}
+
+/**
+ * If you give it an event, it will pass it through the usage plugins and attempt to fill it in with details
+ * along the way. There are some useful classes BaseUsageEvent, BaseWithFeature, BaseFeaturesCollection,
+ * and BaseCollectionContext that we recommend you use as base classes, as they will have their fields
+ * detected and filled in.
+ *
+ * @param event - something that can have "toMap()" called on it
+ */
+
+// recordUsageEvent(event: any | UsageEvent): any;
+func (cc *ClientWithContext) RecordUsageEvent(event usage.UsageEvent) usage.UsageEvent {
+
+}
+
+/**
+ * This gives a full
+ */
+func (cc *ClientWithContext) GetContextUsage() usage.UsageEvent {
+	// user key will be filled in when fillEvent is called
+	return cc.fillEvent(cc.featureRepository.UsageProvider().NewUsageContextCollectionEvent(""))
+}
+
+func (cc *ClientWithContext) RecordNamedUsage(name string, additionalParams *map[string]interface{}) {
+
+}
+
+func (cc *ClientWithContext) fillEvent(event usage.UsageEvent) usage.UsageEvent {
+	if userKey, ok := cc.UniqueKey(); ok {
+		event.SetUserKey(userKey)
+	}
+
+	if featureValues, ok := event.(usage.FeaturesCollection); ok {
+		featureValues.SetFeatureValues(cc.mapRepositoryFeaturesToUsageValues())
+	}
+
+	if collectionContext, ok := event.(usage.CollectionContext); ok {
+		collectionContext.SetContextAttributes(cc.fullContext())
+	}
+
+	return event
+}
+
+func (cc *ClientWithContext) mapRepositoryFeaturesToUsageValues() []*usage.FeatureHubUsageValue {
+	// this is a teeny bit more complicated than other languages as the getting of the value and the evaluation is
+	// all done in this class.
+
+	// grab all the feature keys, ids and types
+	features := cc.featureRepository.GetFeatures()
+
+	usageValues := make([]*usage.FeatureHubUsageValue, 0)
+
+	var value interface{} = nil
+	var ok error = nil
+	var found = false
+
+	// walk through collecting values within this context
+	for _, feat := range features {
+		found = true
+		if feat.ValueType == models.TypeNumber {
+			value, ok = cc.GetNumber(feat.Key)
+		} else if feat.ValueType == models.TypeString {
+			value, ok = cc.GetString(feat.Key)
+		} else if feat.ValueType == models.TypeJSON {
+			value, ok = cc.GetRawJSON(feat.Key)
+		} else if feat.ValueType == models.TypeBoolean {
+			value, ok = cc.GetBoolean(feat.Key)
+		} else {
+			found = false
+		}
+
+		if ok == nil && found {
+			usageValues = append(usageValues, usage.NewUsageValue(feat.ID, feat.Key, value, feat.ValueType))
+		}
+	}
+
+	return usageValues
+}
+
+func (cc *ClientWithContext) fullContext() usage.ContextRecord {
+	record := make(usage.ContextRecord)
+
+	if cc.Context.Device != "" {
+		record["device"] = cc.Context.Device
+	}
+	if cc.Context.Platform != "" {
+		record["platform"] = cc.Context.Platform
+	}
+	if cc.Context.Country != "" {
+		record["country"] = cc.Context.Country
+	}
+	if cc.Context.Version != "" {
+		record["version"] = cc.Context.Version
+	}
+	if cc.Context.Custom != nil {
+		maps.Copy(record, cc.Context.Custom)
+	}
+
+	return record
 }

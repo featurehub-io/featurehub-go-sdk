@@ -8,6 +8,7 @@ import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/usage"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
@@ -22,14 +23,20 @@ type ClientFeatureHubRepository struct {
 	notifiersMutex    sync.Mutex
 	readinessListener func()
 	valueInterceptors []interfaces.FeatureValueInterceptor
+	usageProvider     usage.ProviderFactory
 }
 
 func NewClientFeatureHubRepository(logger *logrus.Logger) *ClientFeatureHubRepository {
 	return &ClientFeatureHubRepository{
-		features:  make(map[string]*models.FeatureState),
-		logger:    logger,
-		notifiers: make(notifiers),
+		features:      make(map[string]*models.FeatureState),
+		logger:        logger,
+		notifiers:     make(notifiers),
+		usageProvider: usage.DefaultProvider,
 	}
+}
+
+func (r *ClientFeatureHubRepository) UsageProvider() usage.ProviderFactory {
+	return r.usageProvider
 }
 
 // ReadinessListener defines a callback function which will be triggered once the repository has received data for the first time:
@@ -129,62 +136,96 @@ func (r *ClientFeatureHubRepository) GetBoolean(key string) (bool, error) {
 	return value, err
 }
 
-func (r *ClientFeatureHubRepository) GetInternalNumber(key string, recordUsage bool) (feature *models.FeatureState, matched bool, value float64, err error) {
+func (r *ClientFeatureHubRepository) GetInternalNumber(key string, recordUsage bool) (feature *models.FeatureState, matched bool, value *float64, err error) {
 	fs, matched, valueRaw, err := r.GetFeature(key, true)
 
 	if err != nil {
-		return fs, matched, 0, err
+		return fs, matched, nil, err
 	}
+
 	if fs != nil && fs.Type != models.TypeNumber {
-		return fs, matched, 0, errors.NewErrInvalidType(string(fs.Type))
+		return fs, matched, nil, errors.NewErrInvalidType(string(fs.Type))
+	}
+
+	if valueRaw == nil {
+		return fs, matched, nil, nil
 	}
 
 	if value, ok := valueRaw.(float64); ok {
-		return fs, matched, value, nil
+		return fs, matched, &value, nil
 	}
 
 	if valueStr, okStr := valueRaw.(string); okStr {
 		float, ferr := strconv.ParseFloat(valueStr, 64)
-		return fs, matched, float, ferr
+		return fs, matched, &float, ferr
 	}
 
-	return fs, matched, 0, errors.NewErrInvalidType(key)
+	return fs, matched, nil, errors.NewErrInvalidType(key)
 }
 
 // GetNumber searches for a feature by key, returns the value as a float64:
-func (r *ClientFeatureHubRepository) GetNumber(key string) (float64, error) {
+func (r *ClientFeatureHubRepository) GetNumber(key string) (*float64, error) {
 	_, _, value, err := r.GetInternalNumber(key, true)
 	return value, err
 }
 
-func (r *ClientFeatureHubRepository) GetInternalString(key string, recordUsage bool, expectedType models.FeatureValueType) (feature *models.FeatureState, matched bool, value string, err error) {
+func (r *ClientFeatureHubRepository) GetInternalString(key string, recordUsage bool, expectedType models.FeatureValueType) (feature *models.FeatureState, matched bool, value *string, err error) {
 	fs, matched, valueRaw, err := r.GetFeature(key, recordUsage)
 
 	if err != nil {
-		return fs, matched, "", err
+		return fs, matched, nil, err
 	}
 
 	if fs != nil && fs.Type != expectedType {
-		return fs, matched, "", errors.NewErrInvalidType(string(expectedType))
+		return fs, matched, nil, errors.NewErrInvalidType(string(expectedType))
+	}
+
+	if valueRaw == nil {
+		return fs, matched, nil, nil
 	}
 
 	if valueStr, okStr := valueRaw.(string); okStr {
-		return fs, matched, valueStr, nil
+		return fs, matched, &valueStr, nil
 	}
 
-	return fs, matched, "", errors.NewErrInvalidType(key)
+	// its invalid because it is not nil and is not a string
+	return fs, matched, nil, errors.NewErrInvalidType(key)
 }
 
 // GetRawJSON searches for a feature by key, returns the value as a JSON string:
-func (r *ClientFeatureHubRepository) GetRawJSON(key string) (string, error) {
+func (r *ClientFeatureHubRepository) GetRawJSON(key string) (*string, error) {
 	_, _, value, err := r.GetInternalString(key, true, models.TypeJSON)
 	return value, err
 }
 
 // GetString searches for a feature by key, returns the value as a string:
-func (r *ClientFeatureHubRepository) GetString(key string) (string, error) {
+func (r *ClientFeatureHubRepository) GetString(key string) (*string, error) {
 	_, _, value, err := r.GetInternalString(key, true, models.TypeString)
 	return value, err
+}
+
+func (r *ClientFeatureHubRepository) Number(featureKey string) float64 {
+	if f, e := r.GetNumber(featureKey); e == nil || f == nil {
+		return 0.0
+	} else {
+		return *f
+	}
+}
+
+func (r *ClientFeatureHubRepository) JSON(featureKey string) string {
+	if f, e := r.GetRawJSON(featureKey); e == nil || f == nil {
+		return "{}"
+	} else {
+		return *f
+	}
+}
+
+func (r *ClientFeatureHubRepository) String(featureKey string) string {
+	if f, e := r.GetString(featureKey); e == nil || f == nil {
+		return ""
+	} else {
+		return *f
+	}
 }
 
 func (r *ClientFeatureHubRepository) AddNotifierFeature(featureKey string, callbackFunc models.CallbackFuncFeature) (string, error) {
@@ -347,6 +388,20 @@ func (r *ClientFeatureHubRepository) ProcessDeleteFeature(feature *models.Featur
 	defer r.featuresMutex.Unlock()
 	delete(r.features, feature.Key)
 	r.logger.WithField("key", feature.Key).Debug("Deleted a feature")
+}
+
+func (r *ClientFeatureHubRepository) GetFeatures() []*models.FeatureIdentity {
+	r.featuresMutex.Lock()
+
+	defer r.featuresMutex.Unlock()
+
+	features := make([]*models.FeatureIdentity, len(r.features))
+
+	for _, f := range r.features {
+		features = append(features, &models.FeatureIdentity{ID: f.ID, Key: f.Key, ValueType: f.Type})
+	}
+
+	return features
 }
 
 // notify triggers all callbacks registered for the given feature:

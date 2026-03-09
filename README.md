@@ -27,7 +27,7 @@ Capabilities
 | REST API by timer polling (GET feature updates)  |    N     | Y        |
 | REST API by usage/timeout (GET feature updates)  |    N     | Y        |
 | REST API one-off GET requests support            |    N     | Y        |
-| Test API (PUT requests to update feature values) |    N     | N |
+| Test API (PUT requests to update feature values) |    N     | Y        |
 | Rollout Strategies - Server Evaluated            |    N     | Y (1)    |
 | Rollout Strategies - Client Evaluated            |    Y     | Y        |
 | Background Start                                 |    Y     | Y        |
@@ -36,11 +36,14 @@ Capabilities
 | Feature Listeners                                |    Y     | Y        |
 | Feature Listener Removal                         |    Y     | Y        |
 | Usage Support                                    |    N     | Y        |
+| OpenTelemetry Usage Support                      |    N     | Y        |
+| Twilio Segment Usage Support                     |    N     | Y        |
 | Feature Overrides                                |    N     | Y        |
 | Fastly Polling Support                           |    N     | Y        |
 | Fastly SSE Support                               |    Y     | Y        |
 | Catch & Release                                  |    N     | N        |
-| Feature Interceptors                             |    N     | Y |
+| Feature Interceptors                             |    N     | Y        |
+| Feature Properties                               |    N     | N        |
 
 Usage
 -----

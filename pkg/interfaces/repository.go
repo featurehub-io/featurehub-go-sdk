@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/usage"
 )
 
 // RepositoryContext - this is the main interface used for requesting features, and it
@@ -15,9 +16,15 @@ type RepositoryContext interface {
 	AddNotifierFeature(featureKey string, callbackFunc models.CallbackFuncFeature) (notifierUUID string, err error) // Configure a notifier for a FeatureState:
 	DeleteNotifier(featureKey, notifierUUID string) error                                                           // Remove a previously configured notifier (by key and UUID, because we support more than one notifier per key)
 	GetBoolean(featureKey string) (bool, error)                                                                     // Retrieve a value (by key) for a BOOLEAN feature
-	GetNumber(featureKey string) (float64, error)                                                                   // Retrieve a value (by key) for a NUMBER feature
-	GetRawJSON(featureKey string) (string, error)                                                                   // Retrieve a value (by key) for a JSON feature
-	GetString(featureKey string) (string, error)                                                                    // Retrieve a value (by key) for a STRING feature
+	GetNumber(featureKey string) (*float64, error)                                                                  // Retrieve a value (by key) for a NUMBER feature
+	GetRawJSON(featureKey string) (*string, error)                                                                  // Retrieve a value (by key) for a JSON feature
+	GetString(featureKey string) (*string, error)                                                                   // Retrieve a value (by key) for a STRING feature
+	// Number "safe" always returns 0 if it cannot find the value, or it is nil
+	Number(featureKey string) float64
+	// JSON "safe" always returns "{}" if it cannot find the value, or it is nil
+	JSON(featureKey string) string
+	// String "safe" always returns "" if it cannot find the value, or it is nil
+	String(featureKey string) string
 }
 
 // FeatureRepository - contexts don't need to implement these and sources of features don't need them either.
@@ -25,9 +32,14 @@ type RepositoryContext interface {
 // properly, so we have to do it wrapped. But we do need to be able to get the raw feature the originating repository.
 type FeatureRepository interface {
 	GetFeature(featureKey string, recordUsage bool) (feature *models.FeatureState, matched bool, value interface{}, err error)
-	GetInternalString(key string, recordUsage bool, expectedType models.FeatureValueType) (feature *models.FeatureState, matched bool, value string, err error)
-	GetInternalNumber(key string, recordUsage bool) (feature *models.FeatureState, matched bool, value float64, err error)
+	// GetInternalString - nil is a valid value for string data types
+	GetInternalString(key string, recordUsage bool, expectedType models.FeatureValueType) (feature *models.FeatureState, matched bool, value *string, err error)
+	// GetInternalNumber - nil is a valid value for numeric data types
+	GetInternalNumber(key string, recordUsage bool) (feature *models.FeatureState, matched bool, value *float64, err error)
+	// GetInternalBoolean - will always be true or false
 	GetInternalBoolean(key string, recordUsage bool) (feature *models.FeatureState, matched bool, value bool, err error)
+	GetFeatures() []*models.FeatureIdentity
+	UsageProvider() usage.ProviderFactory
 }
 
 type Context interface {

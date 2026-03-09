@@ -8,10 +8,14 @@ Todo
 - [X] Compare versions when "feature" event is received (don't just overwrite)
 - [X] Allow notify / callback functions (add and remove)
 - [X] Global "readyness" callback (either OK when data has arrived, or an error if there was a fail)
-- [X] Analytics support
-- [X] Google Analytics support
 - [X] Removed support for server-side ClientContext, and submit this as an x-featurehub header upon connection
 - [ ] Run tests and code-generation inside Docker (instead of requiring Go to be installed locally)
+- [ ] Feature Properties
+- [ ] Features should be stored in repo by ID NOT key as keys can change leaving us with dangling keys
+- [ ] Strategies should support arrays in the Context like the other SDKs
+- [ ] Usage
+- [ ] Check the percentage calc is the same in golang as everywhere else
+- [ ] Can SSE server side eval be supported?
 - [X] Client-side rollout strategies (https://github.com/featurehub-io/featurehub/tree/master/backend/sse-strategy-matchers/src)
 	- [x] Percentages [==, !=]
 	- [x] Country [==, !=]
