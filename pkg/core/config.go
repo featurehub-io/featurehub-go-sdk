@@ -9,6 +9,7 @@ import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/usage"
 	"github.com/sirupsen/logrus"
 )
 
@@ -30,6 +31,7 @@ type Config struct {
 	ServerAddress     string                      // FeatureHub API endpoint
 	WaitForData       *time.Duration              // if set, how long a repository will wait before aborting connection attempt
 	repository        *ClientFeatureHubRepository // A FeatureHub repository implementation
+	usageAdapter      *usage.Adapter
 	EdgeProvider      EdgeProviderFunc
 	fatalErrorHandler *interfaces.ErrorFunc // A user-provided handler func for fatal asynchronous errors
 	RequestedEdgeType EdgeType              // used to determine which edge repository we should use
@@ -68,7 +70,13 @@ func NewConfig(serverAddress, sdkKey string, edgeProvider EdgeProviderFunc) *Con
 }
 
 func (c *Config) SetRepository(repository *ClientFeatureHubRepository) {
-	c.repository = repository
+	if repository != c.repository {
+		if c.usageAdapter != nil {
+			c.usageAdapter.Close()
+		}
+		c.repository = repository
+		c.usageAdapter = usage.NewAdapter(repository, c.Logger)
+	}
 }
 
 func (c *Config) PassiveRest(interval time.Duration) *Config {
@@ -127,11 +135,19 @@ func (c *Config) NewContext() *ClientWithContext {
 	}
 }
 
+func (c *Config) RegisterUsagePlugin(plugin usage.Plugin) *Config {
+	c.checkRepository()
+
+	c.usageAdapter.RegisterPlugin(plugin)
+
+	return c
+}
+
 // ensures the repositories are all set correctly and returns the internal one. for use by edge clients to
 // push data into the repository
 func (c *Config) checkRepository() interfaces.InternalRepository {
 	if c.repository == nil {
-		c.repository = NewClientFeatureHubRepository(c.Logger)
+		c.SetRepository(NewClientFeatureHubRepository(c.Logger))
 	}
 
 	return c.repository

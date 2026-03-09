@@ -24,6 +24,9 @@ type ClientFeatureHubRepository struct {
 	readinessListener func()
 	valueInterceptors []interfaces.FeatureValueInterceptor
 	usageProvider     usage.ProviderFactory
+	usageStreams      map[int]usage.StreamHandler
+	usageStreamsMu    sync.Mutex
+	nextStreamID      int
 }
 
 func NewClientFeatureHubRepository(logger *logrus.Logger) *ClientFeatureHubRepository {
@@ -37,6 +40,29 @@ func NewClientFeatureHubRepository(logger *logrus.Logger) *ClientFeatureHubRepos
 
 func (r *ClientFeatureHubRepository) UsageProvider() usage.ProviderFactory {
 	return r.usageProvider
+}
+
+func (r *ClientFeatureHubRepository) RegisterUsageStream(handler usage.StreamHandler) int {
+	r.usageStreamsMu.Lock()
+	defer r.usageStreamsMu.Unlock()
+	if r.usageStreams == nil {
+		r.usageStreams = make(map[int]usage.StreamHandler)
+	}
+	r.nextStreamID++
+	r.usageStreams[r.nextStreamID] = handler
+	return r.nextStreamID
+}
+
+func (r *ClientFeatureHubRepository) RemoveUsageStream(id int) {
+	r.usageStreamsMu.Lock()
+	defer r.usageStreamsMu.Unlock()
+	delete(r.usageStreams, id)
+}
+
+func (r *ClientFeatureHubRepository) EmitUsageEvent(event usage.UsageEvent) {
+	for _, h := range r.usageStreams {
+		h(event)
+	}
 }
 
 // ReadinessListener defines a callback function which will be triggered once the repository has received data for the first time:
