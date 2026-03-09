@@ -52,12 +52,14 @@ func (cc *ClientWithContext) String(featureKey string) string {
 func (cc *ClientWithContext) GetBoolean(key string) (bool, error) {
 	// Use the existing GetFeature method:
 	fs, matched, value, err := cc.featureRepository.GetInternalBoolean(key)
+
 	if err != nil {
 		return false, err
 	}
-
-	// it was overridden, so return that
 	if matched {
+		if fs != nil {
+			cc.used(key, fs.ID, value, fs.Type)
+		}
 		return value, nil
 	}
 
@@ -83,8 +85,14 @@ func (cc *ClientWithContext) GetBoolean(key string) (bool, error) {
 func (cc *ClientWithContext) GetNumber(key string) (*float64, error) {
 	fs, matched, value, err := cc.featureRepository.GetInternalNumber(key)
 
-	if matched || err != nil {
-		return value, err
+	if err != nil {
+		return nil, err
+	}
+	if matched {
+		if fs != nil {
+			cc.used(key, fs.ID, value, fs.Type)
+		}
+		return value, nil
 	}
 
 	if fs != nil {
@@ -109,9 +117,14 @@ func (cc *ClientWithContext) GetNumber(key string) (*float64, error) {
 func (cc *ClientWithContext) getContextString(key string, valueType models.FeatureValueType) (*string, error) {
 	fs, matched, value, err := cc.featureRepository.GetInternalString(key, valueType)
 
-	// if matched, err will be nil
-	if matched || err != nil {
-		return value, err
+	if err != nil {
+		return nil, err
+	}
+	if matched {
+		if fs != nil {
+			cc.used(key, fs.ID, value, fs.Type)
+		}
+		return value, nil
 	}
 
 	if fs != nil {
@@ -141,6 +154,10 @@ func (cc *ClientWithContext) GetRawJSON(key string) (*string, error) {
 // GetString searches for a feature by key, returns the value as a string:
 func (cc *ClientWithContext) GetString(key string) (*string, error) {
 	return cc.getContextString(key, models.TypeString)
+}
+
+func (cc *ClientWithContext) Properties(featureKey string) map[string]string {
+	return cc.repository.Properties(featureKey)
 }
 
 // WithContext returns a new clientWithContext:

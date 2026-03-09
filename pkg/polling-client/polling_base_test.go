@@ -134,7 +134,7 @@ func TestPollWhenStoppedIsNoop(t *testing.T) {
 func TestPollDeliversFeaturesOn200(t *testing.T) {
 	envs := []*models.FeatureEnvironmentCollection{
 		{ID: "env-1", Features: []*models.FeatureState{
-			{Key: "flag", Type: models.TypeBoolean, Value: true, Version: 1},
+			{ID: "id-flag", Key: "flag", Type: models.TypeBoolean, Value: true, Version: 1},
 		}},
 	}
 	body, _ := json.Marshal(envs)

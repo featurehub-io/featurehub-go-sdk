@@ -7,7 +7,9 @@ import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/strategies"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/usage"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var TestFeature1States = []*models.FeatureState{
@@ -320,4 +322,203 @@ func TestClientWithContext(t *testing.T) {
 	// See if we can match the "custom-string" attribute:
 	assert.Equal(t, "you have the custom string",
 		derefString(repository.WithContext(&models.Context{Custom: map[string]interface{}{"custom-string": "this is it"}}).GetString("TestFeature1")))
+}
+
+// --- Usage event emission ---
+
+// captureUsageEvents registers a stream handler on repo and returns a slice that
+// accumulates every BaseWithFeature event emitted synchronously during the test.
+func captureUsageEvents(repo *ClientFeatureHubRepository) *[]*usage.BaseWithFeature {
+	var events []*usage.BaseWithFeature
+	repo.RegisterUsageStream(func(event usage.UsageEvent) {
+		if e, ok := event.(*usage.BaseWithFeature); ok {
+			events = append(events, e)
+		}
+	})
+	return &events
+}
+
+func TestGetBooleanEmitsUsageEventWithDefaultValue(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeatures([]*models.FeatureState{
+		ffs(`{"key":"flag","type":"BOOLEAN","value":true,"id":"id-flag","version":1}`),
+	})
+	events := captureUsageEvents(repo)
+
+	ctx := repo.WithContext(&models.Context{Userkey: "alice"})
+	val, err := ctx.GetBoolean("flag")
+
+	require.NoError(t, err)
+	assert.True(t, val)
+	require.Len(t, *events, 1)
+	assert.Equal(t, "flag", (*events)[0].Feature().Key)
+	assert.Equal(t, "on", (*events)[0].Feature().Value)
+	assert.Equal(t, "alice", (*events)[0].UserKey())
+}
+
+func TestGetNumberEmitsUsageEventWithDefaultValue(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeatures([]*models.FeatureState{
+		ffs(`{"key":"count","type":"NUMBER","value":42,"id":"id-count","version":1}`),
+	})
+	events := captureUsageEvents(repo)
+
+	ctx := repo.WithContext(&models.Context{Userkey: "bob"})
+	val, err := ctx.GetNumber("count")
+
+	require.NoError(t, err)
+	require.NotNil(t, val)
+	assert.Equal(t, float64(42), *val)
+	require.Len(t, *events, 1)
+	assert.Equal(t, "count", (*events)[0].Feature().Key)
+	assert.Equal(t, "bob", (*events)[0].UserKey())
+}
+
+func TestGetStringEmitsUsageEventWithDefaultValue(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeatures([]*models.FeatureState{
+		ffs(`{"key":"label","type":"STRING","value":"hello","id":"id-label","version":1}`),
+	})
+	events := captureUsageEvents(repo)
+
+	ctx := repo.WithContext(&models.Context{Userkey: "carol"})
+	val, err := ctx.GetString("label")
+
+	require.NoError(t, err)
+	require.NotNil(t, val)
+	assert.Equal(t, "hello", *val)
+	require.Len(t, *events, 1)
+	assert.Equal(t, "label", (*events)[0].Feature().Key)
+	assert.Equal(t, "carol", (*events)[0].UserKey())
+}
+
+func TestGetRawJSONEmitsUsageEvent(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeatures([]*models.FeatureState{
+		ffs(`{"key":"cfg","type":"JSON","value":"{\"x\":1}","id":"id-cfg","version":1}`),
+	})
+	events := captureUsageEvents(repo)
+
+	ctx := repo.WithContext(&models.Context{Userkey: "dave"})
+	_, err := ctx.GetRawJSON("cfg")
+
+	require.NoError(t, err)
+	require.Len(t, *events, 1)
+	assert.Equal(t, "cfg", (*events)[0].Feature().Key)
+}
+
+func TestStrategyMatchEmitsUsageEventWithStrategyValue(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeatures([]*models.FeatureState{
+		{
+			ID:    "id-f1",
+			Key:   "TestFeature1",
+			Type:  models.TypeString,
+			Value: "default",
+			Strategies: []models.Strategy{
+				{
+					ID:    "s1",
+					Value: "for-thailand",
+					Attributes: []*models.StrategyAttribute{
+						{
+							Conditional: strategies.ConditionalEquals,
+							FieldName:   strategies.FieldNameCountry,
+							Values:      []interface{}{"thailand"},
+							Type:        strategies.TypeString,
+						},
+					},
+				},
+			},
+		},
+	})
+	events := captureUsageEvents(repo)
+
+	ctx := repo.WithContext(&models.Context{Userkey: "eve", Country: models.ContextCountryThailand})
+	val, err := ctx.GetString("TestFeature1")
+
+	require.NoError(t, err)
+	require.NotNil(t, val)
+	assert.Equal(t, "for-thailand", *val)
+	require.Len(t, *events, 1)
+	assert.Equal(t, "for-thailand", (*events)[0].Feature().Value)
+	assert.Equal(t, "eve", (*events)[0].UserKey())
+}
+
+func TestFeatureNotFoundDoesNotEmitUsageEvent(t *testing.T) {
+	repo := createRepository()
+	events := captureUsageEvents(repo)
+
+	ctx := repo.WithContext(&models.Context{Userkey: "frank"})
+	_, err := ctx.GetBoolean("absent")
+
+	assert.Error(t, err)
+	assert.Empty(t, *events)
+}
+
+func TestInterceptorMatchEmitsUsageEventWhenFeatureExists(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeatures([]*models.FeatureState{
+		ffs(`{"key":"flag","type":"BOOLEAN","value":false,"id":"id-flag","version":1}`),
+	})
+	repo.AddValueInterceptor(interceptorThatMatches(true))
+	events := captureUsageEvents(repo)
+
+	ctx := repo.WithContext(&models.Context{Userkey: "grace"})
+	val, err := ctx.GetBoolean("flag")
+
+	require.NoError(t, err)
+	assert.True(t, val)
+	require.Len(t, *events, 1, "interceptor match on an existing feature must emit a usage event")
+	assert.Equal(t, "flag", (*events)[0].Feature().Key)
+	assert.Equal(t, "grace", (*events)[0].UserKey())
+}
+
+func TestInterceptorMatchOnUnknownFeatureDoesNotEmitUsageEvent(t *testing.T) {
+	repo := createRepository()
+	// No features loaded — interceptor provides a value for an unknown key.
+	repo.AddValueInterceptor(interceptorThatMatches(true))
+	events := captureUsageEvents(repo)
+
+	ctx := repo.WithContext(&models.Context{Userkey: "heidi"})
+	val, err := ctx.GetBoolean("absent")
+
+	require.NoError(t, err)
+	assert.True(t, val)
+	assert.Empty(t, *events, "interceptor match on an unknown feature must not emit a usage event")
+}
+
+// --- Properties ---
+
+func TestClientWithContextPropertiesReturnsNilForUnknownFeature(t *testing.T) {
+	repo := createRepository()
+	ctx := repo.WithContext(&models.Context{})
+
+	assert.Nil(t, ctx.Properties("does-not-exist"))
+}
+
+func TestClientWithContextPropertiesReturnsNilWhenFeatureHasNoProperties(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeature(ffs(`{"id":"id-myfeature","key":"myfeature","type":"BOOLEAN","value":true,"version":1}`))
+	ctx := repo.WithContext(&models.Context{})
+
+	assert.Nil(t, ctx.Properties("myfeature"))
+}
+
+func TestClientWithContextPropertiesReturnsMapFromUnderlyingFeature(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeature(ffs(`{"id":"id-myfeature","key":"myfeature","type":"STRING","value":"hello","version":1,"fp":{"env":"prod","tier":"gold"}}`))
+	ctx := repo.WithContext(&models.Context{})
+
+	result := ctx.Properties("myfeature")
+	assert.Equal(t, map[string]string{"env": "prod", "tier": "gold"}, result)
+}
+
+func TestClientWithContextPropertiesIsConsistentAcrossContextSwitch(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeature(ffs(`{"id":"id-myfeature","key":"myfeature","type":"STRING","value":"v","version":1,"fp":{"k":"v"}}`))
+
+	ctx1 := repo.WithContext(&models.Context{Userkey: "user1"})
+	ctx2 := ctx1.WithContext(&models.Context{Userkey: "user2"})
+
+	assert.Equal(t, ctx1.Properties("myfeature"), ctx2.Properties("myfeature"))
 }

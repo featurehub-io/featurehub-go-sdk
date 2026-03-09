@@ -16,6 +16,7 @@ Features
 	- Notifiers can be added for named feature keys, which will trigger a user-provided callback function whenever a feature with this key is updated
 	- Notifiers can be added ahead of time (before the client even knows about the feature-keys in question)
 * Custom errors (allows you to handle different errors in specific ways)
+* Usage analytics — automatic recording of feature evaluations with pluggable delivery
 
 
 Capabilities
@@ -43,7 +44,7 @@ Capabilities
 | Fastly SSE Support                               |    Y     | Y        |
 | Catch & Release                                  |    N     | N        |
 | Feature Interceptors                             |    N     | Y        |
-| Feature Properties                               |    N     | N        |
+| Feature Properties                               |    N     | Y        |
 
 Usage
 -----
@@ -64,15 +65,26 @@ There are 3 steps to connecting:
 	}
 
 	// Get a context from this config:
-	fhClient := fhClient.NewContext()
+	fhClient := fhConfig.NewContext()
 ```
 
 ### Requesting Features
 The client SDK offers various `Get` methods to retrieve different types of features:
+
 * `GetBoolean(key)`: returns a true or false
 * `GetRawJSON(key)`: returns a serialised JSON object
-* `GetNumber(key)`: returns a float64
-* `GetString(key)`: returns a string
+* `GetNumber(key)`: returns a `*float64`
+* `GetString(key)`: returns a `*string`
+
+Each of these exposes a possible error if the key does not exist or the underlying data is
+not of a valid type. `GetBoolean` will always return a true or false value, but the others
+can return nil if they are unset in your FeatureHub UI. If you wish to always return a default
+value but with no possible error condition, use:
+
+* `Boolean(key)`: returns true only if the key exists and is set to true
+* `JSON(key)`: will always return at least `{}` even if the key does not exist or it is nil
+* `Number(key)`: will return `0.0` at least, even if the key does not exist or it is nil
+* `String(key)`: will return `""` at least, even if the key does not exist or it is nil
 
 #### Retrieve a BOOLEAN value:
 ```go
@@ -89,7 +101,7 @@ The client SDK offers various `Get` methods to retrieve different types of featu
 	if err != nil {
 		log.Fatalf("Error retrieving a JSON feature: %s", err)
 	}
-	log.Printf("Retrieved a JSON feature: %s", someJSON)
+	// check if someJSON is nil before using
 ```
 
 #### Retrieve a NUMBER value:
@@ -98,7 +110,7 @@ The client SDK offers various `Get` methods to retrieve different types of featu
 	if err != nil {
 		log.Fatalf("Error retrieving a NUMBER feature: %s", err)
 	}
-	log.Printf("Retrieved a NUMBER feature: %f", someNumber)
+	// check if someNumber is nil before using
 ```
 
 #### Retrieve a STRING value:
@@ -107,8 +119,22 @@ The client SDK offers various `Get` methods to retrieve different types of featu
 	if err != nil {
 		log.Fatalf("Error retrieving a STRING feature: %s", err)
 	}
-    log.Printf("Retrieved a STRING feature: %s", someString)
+	// check if someString is nil before using
 ```
+
+
+### Feature Properties
+
+Features can carry an optional set of key/value string properties configured in the FeatureHub UI (serialised as `"fp"` in the JSON payload). These are useful for attaching metadata to a feature flag — for example a display name, a link to a ticket, or a tier label.
+
+```go
+	props := fhClient.Properties("myfeature") // map[string]string, or nil if absent
+	if tier, ok := props["tier"]; ok {
+		log.Printf("Feature tier: %s", tier)
+	}
+```
+
+`Properties` is available on both `ClientWithContext` and directly on the repository.
 
 
 ### Configuring Notifiers (callbacks)
@@ -132,7 +158,7 @@ Some rollout strategies need to be calculated per-request, which means that we c
 
 ```go
 	// Add some values to the context:
-	fhClient.Country = "russia"
+	fhClient.Country = "thailand"
 	fhClient.Custom["test"] = true
 
 	// Now retrieved feature values will be evaluated against your context:
@@ -152,7 +178,7 @@ If you have a complex context then you can define it as a single struct:
 		Custom: map[string]interface{}{
 			"startDate": "now",
 			"username":  "prawn",
-			"iteration", float64(5),
+			"iteration": float64(5),
 		},
 	}
 
@@ -168,9 +194,263 @@ If the featureValue has rollout strategies defined then they will be applied acc
 Note the map of `Custom` values, which are evaluated against your custom features according to their field names (keys).
 
 
+Usage Analytics
+---------------
+
+The SDK includes a usage analytics subsystem (`pkg/usage`) that records feature evaluations and lets you deliver them to any analytics backend.
+
+### When usage is recorded automatically
+
+Every call to `GetBoolean`, `GetNumber`, `GetString`, or `GetRawJSON` on a `ClientWithContext` automatically emits a `BaseWithFeature` usage event. The event captures:
+
+- The feature key and its evaluated value (after strategy evaluation)
+- The user key (from `Context.Userkey` or `Context.Session`)
+- The full context attributes (device, platform, country, version, custom fields)
+
+Usage is **not** emitted when:
+- The feature key is not found
+- A value interceptor matches on a key that does not exist in the repository
+
+### Registering a usage plugin
+
+A usage plugin is any type that implements the `usage.Plugin` interface:
+
+```go
+type Plugin interface {
+    DefaultPluginAttributes() usage.ContextRecord // return nil if unused
+    Send(event usage.UsageEvent)
+}
+```
+
+Register your plugin with the config before calling `Connect()`:
+
+```go
+type MyAnalyticsPlugin struct{}
+
+func (p *MyAnalyticsPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
+
+func (p *MyAnalyticsPlugin) Send(event usage.UsageEvent) {
+    record := event.CollectUsageRecord()
+    // send record to your analytics backend
+    log.Printf("usage event for user=%s: %v", event.UserKey(), record)
+}
+
+fhConfig := client.New(serverAddress, apiKey)
+fhConfig.RegisterUsagePlugin(&MyAnalyticsPlugin{})
+fhConfig.Connect()
+```
+
+Multiple plugins can be registered; each `Send` call runs in its own goroutine. Panics inside `Send` are caught and logged — one failing plugin does not affect others.
+
+### Passive REST and automatic polling on usage
+
+When using passive REST polling (`PassiveRest`), the SDK automatically triggers a `Poll()` call whenever a usage event is emitted. This means the feature cache is refreshed whenever your application processes a request, without requiring you to manage polling manually.
+
+```go
+fhConfig := client.New(serverAddress, apiKey)
+fhConfig.PassiveRest(5 * time.Minute) // max cache age
+fhConfig.Connect()
+
+// Each call to GetBoolean / GetString / etc. will trigger a background poll
+// if the cache has expired.
+ctx := fhConfig.NewContext()
+ctx.GetBoolean("myFlag")
+```
+
+### Manually recording usage events
+
+You can emit your own usage events via the context at any point — for example to record a page view or a user action alongside feature data.
+
+#### Record a single named event with context
+
+`RecordNamedUsage` creates an event named after the first argument. It is automatically enriched with the current user key, all feature values, and context attributes:
+
+```go
+ctx.RecordNamedUsage("page-view", usage.ContextRecord{
+    "page": "/checkout",
+    "referrer": "email-campaign",
+})
+```
+
+#### Record a full context snapshot
+
+`GetContextUsage` builds a snapshot of the entire feature state evaluated in the current context. You can enrich it and then emit it:
+
+```go
+snapshot := ctx.GetContextUsage()
+ctx.RecordUsageEvent(snapshot)
+```
+
+#### Record a raw event
+
+You can construct and emit any `UsageEvent` directly:
+
+```go
+event := usage.NewUsageEventWithFeature(
+    usage.NewUsageValue("feature-id", "myFlag", true, models.TypeBoolean),
+    usage.ContextRecord{"page": "/home"},
+    "user-123",
+)
+ctx.RecordUsageEvent(event)
+```
+
+### Usage event types
+
+The `pkg/usage` package provides a hierarchy of event types. All embed `BaseUsageEvent` which carries the user key and optional additional data.
+
+| Type | Event name | Description |
+|------|-----------|-------------|
+| `BaseUsageEvent` | — | Base type; user key + free-form additional data |
+| `BaseWithFeature` | `"feature"` | Single feature evaluation: key, value, context attributes |
+| `BaseFeaturesCollection` | `"feature-collection"` | All feature values as a flat map |
+| `BaseCollectionContext` | `"feature-collection-context"` | All features + context attributes |
+| `UsageNamedFeaturesCollection` | _(custom)_ | Same as above but with a caller-supplied event name |
+
+`CollectUsageRecord()` on any event type returns a `map[string]interface{}` suitable for serialisation and delivery to an analytics backend.
+
+#### Automatic enrichment by `fillEvent`
+
+When an event is passed through `RecordUsageEvent` or `RecordNamedUsage`, the SDK inspects the event for optional interfaces and fills in fields automatically:
+
+- If the event implements `FeaturesCollection` (i.e. has `SetFeatureValues`), all current feature values evaluated in this context are injected.
+- If the event implements `CollectionContext` (i.e. has `SetContextAttributes`), the full context (device, platform, country, version, custom) is injected.
+- The user key is always set from the current context.
+
+This means `BaseCollectionContext` and `UsageNamedFeaturesCollection` receive all three automatically.
+
+
+Advanced Usage
+--------------
+
+### Customising value conversion with `ConvertFunc`
+
+By default, feature values are converted to strings for usage events as follows:
+
+- `BOOLEAN` → `"on"` / `"off"`
+- `STRING` → the string value as-is
+- `NUMBER` → formatted with `%g` (e.g. `"42"`, `"3.14"`)
+- `JSON` → omitted (empty string)
+
+You can replace this globally with `usage.SetConvertFunc`:
+
+```go
+usage.SetConvertFunc(func(value interface{}, valueType models.FeatureValueType) string {
+    if valueType == models.TypeBoolean {
+        if b, ok := value.(bool); ok && b {
+            return "enabled"
+        }
+        return "disabled"
+    }
+    // fall back to fmt.Sprintf for everything else
+    return fmt.Sprintf("%v", value)
+})
+
+// Reset to the default at any time:
+usage.SetConvertFunc(nil)
+```
+
+`SetConvertFunc` is goroutine-safe and takes effect immediately for all subsequent usage events.
+
+### Writing a custom `ProviderFactory`
+
+The `ProviderFactory` interface controls how usage event objects are constructed. The default implementation (`usage.DefaultProvider`) creates the standard event types described above. You can replace it entirely by implementing the interface:
+
+```go
+type ProviderFactory interface {
+    NewUsageValue(id, key string, value interface{}, valueType models.FeatureValueType) *FeatureHubUsageValue
+    NewUsageValueFromFeature(feature *models.FeatureState) *FeatureHubUsageValue
+    NewUsageFeature(feature *FeatureHubUsageValue, contextAttributes ContextRecord, userKey string) *BaseWithFeature
+    NewUsageCollectionEvent() *BaseFeaturesCollection
+    NewUsageContextCollectionEvent(userKey string) *BaseCollectionContext
+    NewNamedUsageCollection(name string, additionalData ContextRecord) *UsageNamedFeaturesCollection
+}
+```
+
+To inject your custom provider, create the repository explicitly and pass it to the config:
+
+```go
+type MyProvider struct{ usage.Provider } // embed default, override as needed
+
+func (p *MyProvider) NewUsageFeature(
+    feature *usage.FeatureHubUsageValue,
+    contextAttributes usage.ContextRecord,
+    userKey string,
+) *usage.BaseWithFeature {
+    event := usage.NewUsageEventWithFeature(feature, contextAttributes, userKey)
+    // enrich or wrap the event here
+    return event
+}
+
+repo := core.NewClientFeatureHubRepository(logger)
+// inject the provider — the repository exposes UsageProvider() for reading;
+// set the field directly since you own the repository before passing it to Config:
+// (extend ClientFeatureHubRepository or use SetRepository after creation)
+
+fhConfig := core.NewConfig(serverAddress, apiKey, edgeProvider)
+fhConfig.SetRepository(repo)
+```
+
+### Extending the built-in event structs
+
+All event types are ordinary Go structs and can be embedded to add custom fields. Use `RecordUsageEvent` to emit your own enriched events, and type-assert in your plugin's `Send`:
+
+```go
+// Define a custom event type embedding BaseWithFeature:
+type PageViewEvent struct {
+    usage.BaseWithFeature
+    Page    string
+    Campaign string
+}
+
+func (e *PageViewEvent) CollectUsageRecord() usage.ContextRecord {
+    record := e.BaseWithFeature.CollectUsageRecord()
+    record["page"] = e.Page
+    record["campaign"] = e.Campaign
+    return record
+}
+
+// Construct and emit:
+featureValue := usage.NewUsageValue("id", "myFlag", true, models.TypeBoolean)
+event := &PageViewEvent{
+    BaseWithFeature: *usage.NewUsageEventWithFeature(featureValue, nil, "user-123"),
+    Page:            "/checkout",
+    Campaign:        "summer-sale",
+}
+ctx.RecordUsageEvent(event)
+
+// In your plugin:
+func (p *MyPlugin) Send(e usage.UsageEvent) {
+    if pv, ok := e.(*PageViewEvent); ok {
+        // access pv.Page, pv.Campaign directly
+    }
+    // or use the generic path:
+    record := e.CollectUsageRecord()
+    _ = record
+}
+```
+
+### Direct stream registration on the repository
+
+The repository itself exposes a lower-level stream API that bypasses the `Adapter` and plugin system entirely. This is useful for testing or for integrations that want synchronous delivery:
+
+```go
+repo := core.NewClientFeatureHubRepository(logger)
+
+id := repo.RegisterUsageStream(func(event usage.UsageEvent) {
+    // called synchronously on the goroutine that evaluated the feature
+    fmt.Println("event:", event.UserKey())
+})
+
+// Remove the stream when done:
+repo.RemoveUsageStream(id)
+```
+
+Note that the `Adapter` (used by `RegisterUsagePlugin`) calls each plugin's `Send` in a separate goroutine, while direct stream handlers registered via `RegisterUsageStream` are called synchronously.
+
+
 Setup using docker
 ----------------
-We have dockerfile, use below commands to setup 
+We have dockerfile, use below commands to setup
 ```
 1. docker build -t featurehub-go-sdk:v1 .
 2. docker run -p 8080:8080 featurehub-go-sdk:v1

@@ -74,6 +74,21 @@ func TestConfig(t *testing.T) {
 	assert.Equal(t, "customContextKey", withContext.Userkey)
 }
 
+func TestEnvironmentIDThreePart(t *testing.T) {
+	config := &Config{SDKKey: "default/env-id-123/my-api-key"}
+	assert.Equal(t, "env-id-123", config.EnvironmentID())
+}
+
+func TestEnvironmentIDTwoPart(t *testing.T) {
+	config := &Config{SDKKey: "env-id-456/my-api-key"}
+	assert.Equal(t, "env-id-456", config.EnvironmentID())
+}
+
+func TestEnvironmentIDEmptyWhenKeyInvalid(t *testing.T) {
+	config := &Config{SDKKey: "notvalid"}
+	assert.Equal(t, "", config.EnvironmentID())
+}
+
 func TestClientEvaluated(t *testing.T) {
 	config := &Config{}
 

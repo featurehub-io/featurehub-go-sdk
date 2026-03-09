@@ -25,6 +25,8 @@ type RepositoryContext interface {
 	JSON(featureKey string) string
 	// String "safe" always returns "" if it cannot find the value, or it is nil
 	String(featureKey string) string
+
+	Properties(featureKey string) map[string]string
 }
 
 // FeatureRepository - contexts don't need to implement these and sources of features don't need them either.

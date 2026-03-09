@@ -254,6 +254,19 @@ func (r *ClientFeatureHubRepository) String(featureKey string) string {
 	}
 }
 
+func (r *ClientFeatureHubRepository) Properties(featureKey string) map[string]string {
+	r.featuresMutex.Lock()
+	defer r.featuresMutex.Unlock()
+
+	feature, ok := r.features[featureKey]
+
+	if ok {
+		return feature.Properties
+	}
+
+	return nil
+}
+
 func (r *ClientFeatureHubRepository) AddNotifierFeature(featureKey string, callbackFunc models.CallbackFuncFeature) (string, error) {
 	if callbackFunc == nil {
 		return "", errors.NewErrInvalidNotifierCallback("AddNotifierFeature needs a callbackFunc")
@@ -366,7 +379,41 @@ func (r *ClientFeatureHubRepository) ProcessFeature(feature *models.FeatureState
 
 	r.featuresMutex.Lock()
 	defer r.featuresMutex.Unlock()
-	if currentFeature, ok := r.features[feature.Key]; ok {
+
+	var currentFeature *models.FeatureState = nil
+
+	for _, findFeature := range r.features {
+		if findFeature.ID == feature.ID {
+			if findFeature.Key != feature.Key {
+				if findFeature.Version > feature.Version {
+					r.logger.WithField("key", feature.Key).Debug("Received an old feature from server with a changed key")
+					// the existing one is newer, bounce the process request
+					return
+				}
+				// the old feature with this key is not the same
+				// remove the old feature key, it will be added back in with the new key later
+				delete(r.features, findFeature.Key)
+
+				// the key has changed so we need to change the notifiers as well
+				r.notifiersMutex.Lock()
+
+				if foundNotifiers, ok := r.notifiers[findFeature.Key]; ok {
+					// swap the notifiers over to the new key
+					r.notifiers[feature.Key] = foundNotifiers
+					// remove the notifiers from the old key
+					delete(r.notifiers, findFeature.Key)
+				}
+
+				r.notifiersMutex.Unlock()
+			} else {
+				currentFeature = findFeature
+			}
+
+			break
+		}
+	}
+
+	if currentFeature != nil {
 		if feature.Version <= currentFeature.Version {
 			r.logger.WithField("key", feature.Key).Debug("Received an old feature from server")
 			return
@@ -412,7 +459,17 @@ func (r *ClientFeatureHubRepository) ProcessDeleteFeature(feature *models.Featur
 
 	r.featuresMutex.Lock()
 	defer r.featuresMutex.Unlock()
-	delete(r.features, feature.Key)
+
+	// try and find the feature with the same ID and delete that one,
+	// the key doesn't matter
+	for _, findFeature := range r.features {
+		if findFeature.ID == feature.ID {
+			r.logger.WithField("key", findFeature.Key).Debug("Deleted a feature")
+			delete(r.features, findFeature.Key)
+			break
+		}
+	}
+
 	r.logger.WithField("key", feature.Key).Debug("Deleted a feature")
 }
 

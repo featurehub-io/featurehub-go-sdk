@@ -9,13 +9,18 @@ Todo
 - [X] Allow notify / callback functions (add and remove)
 - [X] Global "readyness" callback (either OK when data has arrived, or an error if there was a fail)
 - [X] Removed support for server-side ClientContext, and submit this as an x-featurehub header upon connection
-- [ ] Run tests and code-generation inside Docker (instead of requiring Go to be installed locally)
-- [ ] Feature Properties
-- [ ] Features should be stored in repo by ID NOT key as keys can change leaving us with dangling keys
-- [ ] Strategies should support arrays in the Context like the other SDKs
-- [ ] Usage
-- [ ] Check the percentage calc is the same in golang as everywhere else
+- [X] Dockerfile for building and running the todo-server
+- { ] e2e tests using the javascript client image once Alex figures it out
+- [X] Feature Properties
+- [ ] Polling should be able to handle multi SDK Keys
 - [ ] Can SSE server side eval be supported?
+- [ ] Strategies should support arrays in the Context like the other SDKs
+- [X] Feature updates should deal with key changes, ID is the unique identifier internally
+- [X] Usage
+- [ ] Usage should include the environment id
+- [ ] Usage otel
+- [ ] Usage segment
+- [ ] Check the percentage calc is the same in golang as everywhere else
 - [X] Client-side rollout strategies (https://github.com/featurehub-io/featurehub/tree/master/backend/sse-strategy-matchers/src)
 	- [x] Percentages [==, !=]
 	- [x] Country [==, !=]

@@ -14,9 +14,9 @@ import (
 // seedRepo loads a repository with a minimal feature set from JSON.
 func seedRepo(repo *ClientFeatureHubRepository) {
 	features := []*models.FeatureState{
-		ffs(`{"key":"flag","type":"BOOLEAN","value":false,"version":1}`),
-		ffs(`{"key":"count","type":"NUMBER","value":42,"version":1}`),
-		ffs(`{"key":"label","type":"STRING","value":"default","version":1}`),
+		ffs(`{"id":"id-flag","key":"flag","type":"BOOLEAN","value":false,"version":1}`),
+		ffs(`{"id":"id-count","key":"count","type":"NUMBER","value":42,"version":1}`),
+		ffs(`{"id":"id-label","key":"label","type":"STRING","value":"default","version":1}`),
 	}
 	repo.ProcessFeatures(features)
 }

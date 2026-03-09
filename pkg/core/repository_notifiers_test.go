@@ -12,21 +12,21 @@ import (
 func TestRepositoryNotifiers(t *testing.T) {
 	repository := createRepository()
 
-	features, err := featuresFromString(`[{"key":"feature1","type":"NUMBER","value":2}]`)
+	features, err := featuresFromString(`[{"id":"id-feature1","key":"feature1","type":"NUMBER","value":2}]`)
 	assert.NoError(t, err)
 
 	repository.ProcessFeatures(features)
 
 	// Load the repo up with another "features" event, same versions (zero):
-	features, _ = featuresFromString(`[{"key":"feature1","type":"NUMBER","value":2}]`)
+	features, _ = featuresFromString(`[{"id":"id-feature1","key":"feature1","type":"NUMBER","value":2}]`)
 	repository.ProcessFeatures(features)
 
 	// Load the mock apiClient up with a "feature" event:
-	feature, _ := featureFromString(`{"key":"feature2","type":"BOOLEAN","value":true}`)
+	feature, _ := featureFromString(`{"id":"id-feature2","key":"feature2","type":"BOOLEAN","value":true}`)
 	assert.NoError(t, err)
 	repository.ProcessFeature(feature)
 
-	feature, _ = featureFromString(`{"key":"feature4","type":"NUMBER","value":2}`)
+	feature, _ = featureFromString(`{"id":"id-feature4","key":"feature4","type":"NUMBER","value":2}`)
 	repository.ProcessFeature(feature)
 
 	// Feature1 gets one notifier:
@@ -102,7 +102,7 @@ func TestRepositoryNotifiers(t *testing.T) {
 	}
 	repository.AddNotifierBoolean("booleanfeature", callbackBoolean)
 
-	feature, _ = featureFromString(`{"key":"booleanfeature","type":"BOOLEAN","value":true}`)
+	feature, _ = featureFromString(`{"id":"id-booleanfeature","key":"booleanfeature","type":"BOOLEAN","value":true}`)
 	repository.ProcessFeature(feature)
 
 	// Add a JSON callback:
@@ -113,7 +113,7 @@ func TestRepositoryNotifiers(t *testing.T) {
 	repository.AddNotifierJSON("jsonfeature", callbackJSON)
 
 	// Load the mock apiClient up with a "feature" event:
-	feature, _ = featureFromString(`{"key":"jsonfeature","type":"JSON","value":"{\"is_crufty\": true}"}`)
+	feature, _ = featureFromString(`{"id":"id-jsonfeature","key":"jsonfeature","type":"JSON","value":"{\"is_crufty\": true}"}`)
 	repository.ProcessFeature(feature)
 
 	// Add a NUMBER callback:
@@ -124,7 +124,7 @@ func TestRepositoryNotifiers(t *testing.T) {
 	repository.AddNotifierNumber("numberfeature", callbackNumber)
 
 	// Load the mock apiClient up with a "feature" event:
-	feature, _ = featureFromString(`{"key":"numberfeature","type":"NUMBER","value":123456789}`)
+	feature, _ = featureFromString(`{"id":"id-numberfeature","key":"numberfeature","type":"NUMBER","value":123456789}`)
 	repository.ProcessFeature(feature)
 
 	// Add a STRING callback:
@@ -134,7 +134,7 @@ func TestRepositoryNotifiers(t *testing.T) {
 	}
 	repository.AddNotifierString("stringfeature", callbackString)
 
-	feature, _ = featureFromString(`{"key":"stringfeature","type":"STRING","value":"this is a string"}`)
+	feature, _ = featureFromString(`{"id":"id-stringfeature","key":"stringfeature","type":"STRING","value":"this is a string"}`)
 	repository.ProcessFeature(feature)
 
 	// Give the notifiers some time to think about what they've done:
@@ -149,4 +149,31 @@ func TestRepositoryNotifiers(t *testing.T) {
 	// Check that the repository triggered the readiness listener:
 	assert.True(t, readinessListenerCalled)
 	//assert.Contains(t, logBuffer.String(), "Calling readinessListener()")
+}
+
+func TestFeatureNotifierWhenKeyChanges(t *testing.T) {
+	repository := createRepository()
+
+	var callbackStringValue = `{}`
+	callbackString := func(value string) {
+		callbackStringValue = value
+	}
+	repository.AddNotifierString("stringfeature", callbackString)
+
+	repository.ProcessFeature(ffs(`{"id":"id-stringfeature","key":"stringfeature","type":"STRING","value":"this is a string","version":1}`))
+	fs, _, _, err := repository.GetFeature("stringfeature")
+	assert.NoError(t, err)
+	assert.NotNil(t, fs)
+
+	time.Sleep(250 * time.Millisecond)
+	assert.Equal(t, "this is a string", callbackStringValue)
+
+	repository.ProcessFeature(ffs(`{"id":"id-stringfeature","key":"ออม","type":"STRING","value":"this is also","version":2}`))
+	time.Sleep(250 * time.Millisecond)
+	assert.Equal(t, "this is also", callbackStringValue)
+	fs, _, _, err = repository.GetFeature("ออม")
+	assert.NoError(t, err)
+	assert.NotNil(t, fs)
+	assert.Equal(t, "ออม", fs.Key)
+	assert.Equal(t, "id-stringfeature", fs.ID)
 }

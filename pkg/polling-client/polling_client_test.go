@@ -309,8 +309,8 @@ func TestResponseFlattensFeatureSetsEnvironmentID(t *testing.T) {
 		{
 			ID: "env-abc",
 			Features: []*models.FeatureState{
-				{Key: "flag-a", Type: models.TypeBoolean, Value: true, Version: 1},
-				{Key: "flag-b", Type: models.TypeString, Value: "hello", Version: 1},
+				{ID: "id-flag-a", Key: "flag-a", Type: models.TypeBoolean, Value: true, Version: 1},
+				{ID: "id-flag-b", Key: "flag-b", Type: models.TypeString, Value: "hello", Version: 1},
 			},
 		},
 	})
@@ -330,10 +330,10 @@ func TestResponseMultipleEnvironmentsFlattened(t *testing.T) {
 
 	c.response([]*models.FeatureEnvironmentCollection{
 		{ID: "env-1", Features: []*models.FeatureState{
-			{Key: "flag-1", Type: models.TypeBoolean, Value: true, Version: 1},
+			{ID: "id-flag-1", Key: "flag-1", Type: models.TypeBoolean, Value: true, Version: 1},
 		}},
 		{ID: "env-2", Features: []*models.FeatureState{
-			{Key: "flag-2", Type: models.TypeString, Value: "x", Version: 1},
+			{ID: "id-flag-2", Key: "flag-2", Type: models.TypeString, Value: "x", Version: 1},
 		}},
 	})
 

@@ -43,7 +43,7 @@ func ffs(data string) *models.FeatureState {
 func TestRepositoryFeatures(t *testing.T) {
 	repo := createRepository()
 
-	var data = `[{"key":"booleanfeature","type":"BOOLEAN","value":true, "version":1},{"key":"jsonfeature","type":"JSON","value":"{\"is_crufty\": true}", "version":1},{"key":"numberfeature","type":"NUMBER","value":123456789, "version":1},{"key":"stringfeature","type":"STRING","value":"this is a string", "version":1}]`
+	var data = `[{"id":"id-bool","key":"booleanfeature","type":"BOOLEAN","value":true,"version":1},{"id":"id-json","key":"jsonfeature","type":"JSON","value":"{\"is_crufty\": true}","version":1},{"id":"id-num","key":"numberfeature","type":"NUMBER","value":123456789,"version":1},{"id":"id-str","key":"stringfeature","type":"STRING","value":"this is a string","version":1}]`
 	features, err := featuresFromString(data)
 	assert.NoError(t, err)
 
@@ -107,7 +107,7 @@ func TestRepositoryFeatures(t *testing.T) {
 		assert.Equal(t, "this is a string", *stringFeature)
 	}
 
-	data = `{"key":"booleanfeature","type":"BOOLEAN","value":false,"version":3}`
+	data = `{"id":"id-bool","key":"booleanfeature","type":"BOOLEAN","value":false,"version":3}`
 	anotherFeature, err := featureFromString(data)
 
 	repo.ProcessFeature(anotherFeature)
@@ -116,4 +116,108 @@ func TestRepositoryFeatures(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, false, booleanFeature)
 
+}
+
+func TestPropertiesReturnsNilForUnknownFeature(t *testing.T) {
+	repo := createRepository()
+
+	result := repo.Properties("does-not-exist")
+	assert.Nil(t, result)
+}
+
+func TestPropertiesReturnsNilWhenFeatureHasNoProperties(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeature(ffs(`{"id":"id-myfeature","key":"myfeature","type":"BOOLEAN","value":true,"version":1}`))
+
+	result := repo.Properties("myfeature")
+	assert.Nil(t, result)
+}
+
+func TestPropertiesReturnsMapWhenFeatureHasProperties(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeature(ffs(`{"id":"id-myfeature","key":"myfeature","type":"STRING","value":"hello","version":1,"fp":{"color":"red","size":"large"}}`))
+
+	result := repo.Properties("myfeature")
+	assert.Equal(t, map[string]string{"color": "red", "size": "large"}, result)
+}
+
+func TestPropertiesReturnsEmptyMapForFeatureWithEmptyProperties(t *testing.T) {
+	repo := createRepository()
+	feature := &models.FeatureState{
+		ID:         "id-myfeature",
+		Key:        "myfeature",
+		Type:       models.TypeString,
+		Value:      "hello",
+		Version:    1,
+		Properties: map[string]string{},
+	}
+	repo.ProcessFeature(feature)
+
+	result := repo.Properties("myfeature")
+	assert.NotNil(t, result)
+	assert.Empty(t, result)
+}
+
+func TestWhenKeyChangesCorrectPropertyIsStillUpdated(t *testing.T) {
+	repo := createRepository()
+	feature := &models.FeatureState{
+		ID:      "id-myfeature",
+		Key:     "myfeature",
+		Type:    models.TypeString,
+		Value:   "hello",
+		Version: 1,
+	}
+	repo.ProcessFeature(feature)
+	// we can find the feature by key
+	f, _, _, fErr := repo.GetFeature("myfeature")
+	assert.NoError(t, fErr)
+	assert.NotNil(t, f)
+	assert.Equal(t, feature.ID, f.ID)
+
+	featureChangedKey := &models.FeatureState{
+		ID:      "id-myfeature",
+		Key:     "หลิงหลิง",
+		Type:    models.TypeString,
+		Value:   "hello",
+		Version: 1,
+	}
+
+	repo.ProcessFeature(featureChangedKey)
+	f, _, _, fErr = repo.GetFeature("myfeature")
+	assert.Error(t, fErr)
+	assert.Nil(t, f)
+	f, _, _, fErr = repo.GetFeature("หลิงหลิง")
+	assert.NoError(t, fErr)
+	assert.NotNil(t, f)
+	assert.Equal(t, feature.ID, f.ID)
+
+	// lower version number, changed key
+	featureChanged2Key := &models.FeatureState{
+		ID:      "id-myfeature",
+		Key:     "鄺玲玲",
+		Type:    models.TypeString,
+		Value:   "hello",
+		Version: 0,
+	}
+
+	repo.ProcessFeature(featureChanged2Key)
+	// should fail to find as it has a lower version no
+	f, _, _, fErr = repo.GetFeature("鄺玲玲")
+	assert.Error(t, fErr)
+	assert.Nil(t, f)
+}
+
+func TestFeatureDeletesWhenKeyHasChanged(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeature(ffs(`{"id":"id-stringfeature","key":"หลิงหลิง","type":"STRING","value":"this is a string","version":1}`))
+
+	f, _, _, fErr := repo.GetFeature("หลิงหลิง")
+	assert.NoError(t, fErr)
+	assert.NotNil(t, f)
+	repo.ProcessDeleteFeature(ffs(`{"id":"id-stringfeature","key":"鄺玲玲","type":"STRING","value":"this is a string","version":1}`))
+	f, _, _, fErr = repo.GetFeature("หลิงหลิง")
+	assert.Nil(t, f)
+	assert.Error(t, fErr)
+	_, _, _, fErr = repo.GetFeature("鄺玲玲")
+	assert.Error(t, fErr)
 }

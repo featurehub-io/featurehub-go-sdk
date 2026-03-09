@@ -239,6 +239,19 @@ func (c *Config) AddValueInterceptor(valueInterceptor interfaces.FeatureValueInt
 	c.repository.AddValueInterceptor(valueInterceptor)
 }
 
+// EnvironmentID extracts the environment ID from the SDKKey.
+// The key is either "namedCache/environmentID/apiKey" or "environmentID/apiKey".
+func (c *Config) EnvironmentID() string {
+	parts := strings.Split(c.SDKKey, "/")
+	if len(parts) >= 3 {
+		return parts[1]
+	}
+	if len(parts) == 2 {
+		return parts[0]
+	}
+	return ""
+}
+
 // ClientEvaluated reports whether this SDK key is a client-evaluated key.
 // Client-evaluated keys contain a "*" and cause the SDK to evaluate rollout
 // strategies locally. Server-evaluated keys do not contain "*" and rely on

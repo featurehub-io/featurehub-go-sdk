@@ -44,7 +44,7 @@ func TestStreamingClientFeatures(t *testing.T) {
 
 	// Load the mock apiClient up with a "features" event:
 	client.apiClient.Events <- &testEvent{
-		data:  `[{"key":"booleanfeature","type":"BOOLEAN","value":true},{"key":"jsonfeature","type":"JSON","value":"{\"is_crufty\": true}"},{"key":"numberfeature","type":"NUMBER","value":123456789},{"key":"stringfeature","type":"STRING","value":"this is a string"}]`,
+		data:  `[{"id":"id-bool","key":"booleanfeature","type":"BOOLEAN","value":true},{"id":"id-json","key":"jsonfeature","type":"JSON","value":"{\"is_crufty\": true}"},{"id":"id-num","key":"numberfeature","type":"NUMBER","value":123456789},{"id":"id-str","key":"stringfeature","type":"STRING","value":"this is a string"}]`,
 		event: "features",
 	}
 

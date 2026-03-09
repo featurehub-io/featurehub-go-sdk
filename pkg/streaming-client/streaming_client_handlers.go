@@ -61,6 +61,8 @@ func (c *StreamingClient) handleEvents() {
 				continue
 			}
 
+			feature.EnvironmentID = c.config.EnvironmentID()
+
 			c.repository.ProcessDeleteFeature(feature)
 
 		// Failures (from the FeatureHub server):
@@ -79,6 +81,8 @@ func (c *StreamingClient) handleEvents() {
 				continue
 			}
 
+			feature.EnvironmentID = c.config.EnvironmentID()
+
 			c.repository.ProcessFeature(feature)
 
 		// An entire feature set (replaces what we currently have):
@@ -87,6 +91,11 @@ func (c *StreamingClient) handleEvents() {
 			if err := json.Unmarshal([]byte(event.Data()), &features); err != nil {
 				c.logger.WithError(err).WithField("event", "features").Error("Error unmarshaling SSE payload")
 				return
+			}
+
+			// set their EnvironmentID
+			for _, feature := range features {
+				feature.EnvironmentID = c.config.EnvironmentID()
 			}
 
 			c.repository.ProcessFeatures(features)
