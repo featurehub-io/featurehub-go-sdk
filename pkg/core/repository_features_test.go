@@ -79,7 +79,9 @@ func TestRepositoryFeatures(t *testing.T) {
 	// Look for a JSON feature that IS JSON:
 	jsonFeature, err = repo.GetRawJSON("jsonfeature")
 	assert.NoError(t, err)
-	assert.Equal(t, `{"is_crufty": true}`, jsonFeature)
+	if assert.NotNil(t, jsonFeature) {
+		assert.Equal(t, `{"is_crufty": true}`, *jsonFeature)
+	}
 
 	// Look for a number feature that is NOT a number:
 	numberFeature, err := repo.GetNumber("stringfeature")
@@ -89,7 +91,9 @@ func TestRepositoryFeatures(t *testing.T) {
 	// Look for a number feature that IS a number:
 	numberFeature, err = repo.GetNumber("numberfeature")
 	assert.NoError(t, err)
-	assert.Equal(t, float64(123456789), numberFeature)
+	if assert.NotNil(t, numberFeature) {
+		assert.Equal(t, float64(123456789), *numberFeature)
+	}
 
 	// Look for a string feature that is NOT a string:
 	stringFeature, err := repo.GetString("numberfeature")
@@ -99,7 +103,9 @@ func TestRepositoryFeatures(t *testing.T) {
 	// Look for a string feature that DOES exist:
 	stringFeature, err = repo.GetString("stringfeature")
 	assert.NoError(t, err)
-	assert.Equal(t, "this is a string", stringFeature)
+	if assert.NotNil(t, stringFeature) {
+		assert.Equal(t, "this is a string", *stringFeature)
+	}
 
 	data = `{"key":"booleanfeature","type":"BOOLEAN","value":false,"version":3}`
 	anotherFeature, err := featureFromString(data)

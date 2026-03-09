@@ -186,7 +186,7 @@ func (cc *ClientWithContext) used(key string, id string, value interface{}, valu
 
 // recordUsageEvent(event: any | UsageEvent): any;
 func (cc *ClientWithContext) RecordUsageEvent(event usage.UsageEvent) usage.UsageEvent {
-
+	return event
 }
 
 /**

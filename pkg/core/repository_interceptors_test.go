@@ -201,7 +201,8 @@ func TestInterceptorGetNumberWithOverride(t *testing.T) {
 	value, err := repo.GetNumber("count")
 
 	require.NoError(t, err)
-	assert.Equal(t, float64(99), value)
+	require.NotNil(t, value)
+	assert.Equal(t, float64(99), *value)
 }
 
 func TestInterceptorGetStringWithOverride(t *testing.T) {
@@ -212,7 +213,8 @@ func TestInterceptorGetStringWithOverride(t *testing.T) {
 	value, err := repo.GetString("label")
 
 	require.NoError(t, err)
-	assert.Equal(t, "overridden", value)
+	require.NotNil(t, value)
+	assert.Equal(t, "overridden", *value)
 }
 
 func TestInterceptorMatchedPropagatedFromGetInternalBoolean(t *testing.T) {
@@ -236,7 +238,8 @@ func TestInterceptorMatchedPropagatedFromGetInternalNumber(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, matched)
-	assert.Equal(t, float64(7), value)
+	require.NotNil(t, value)
+	assert.Equal(t, float64(7), *value)
 }
 
 func TestInterceptorMatchedPropagatedFromGetInternalString(t *testing.T) {
@@ -248,7 +251,8 @@ func TestInterceptorMatchedPropagatedFromGetInternalString(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, matched)
-	assert.Equal(t, "injected", value)
+	require.NotNil(t, value)
+	assert.Equal(t, "injected", *value)
 }
 
 // --- Key-specific interceptor ---
@@ -271,5 +275,6 @@ func TestInterceptorCanTargetSpecificKey(t *testing.T) {
 
 	labelValue, err := repo.GetString("label")
 	require.NoError(t, err)
-	assert.Equal(t, "default", labelValue, "non-targeted key should use stored value")
+	require.NotNil(t, labelValue)
+	assert.Equal(t, "default", *labelValue, "non-targeted key should use stored value")
 }

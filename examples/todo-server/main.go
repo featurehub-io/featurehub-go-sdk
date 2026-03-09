@@ -237,17 +237,17 @@ func todoList(user string) []Todo {
 func processTitle(ctx *core.ClientWithContext, title string) string {
 	newTitle := title
 
-	if str, err := ctx.GetString("FEATURE_STRING"); err == nil && title == "buy" {
-		newTitle = fmt.Sprintf("%s %s", title, str)
+	if str, err := ctx.GetString("FEATURE_STRING"); err == nil && str != nil && title == "buy" {
+		newTitle = fmt.Sprintf("%s %s", title, *str)
 	}
 
-	if num, err := ctx.GetNumber("FEATURE_NUMBER"); err == nil && title == "pay" {
-		newTitle = fmt.Sprintf("%s %g", title, num)
+	if num, err := ctx.GetNumber("FEATURE_NUMBER"); err == nil && num != nil && title == "pay" {
+		newTitle = fmt.Sprintf("%s %g", title, *num)
 	}
 
-	if rawJSON, err := ctx.GetRawJSON("FEATURE_JSON"); err == nil && title == "find" {
+	if rawJSON, err := ctx.GetRawJSON("FEATURE_JSON"); err == nil && rawJSON != nil && title == "find" {
 		var obj map[string]interface{}
-		if json.Unmarshal([]byte(rawJSON), &obj) == nil {
+		if json.Unmarshal([]byte(*rawJSON), &obj) == nil {
 			if foo, ok := obj["foo"].(string); ok {
 				newTitle = fmt.Sprintf("%s %s", title, foo)
 			}

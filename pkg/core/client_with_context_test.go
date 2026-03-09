@@ -231,83 +231,68 @@ func TestClientWithContext(t *testing.T) {
 
 	repository.ProcessFeatures(TestFeature1States)
 
+	// derefString unwraps a (*string, error) return: asserts no error, non-nil, and returns the string value.
+	derefString := func(s *string, err error) string {
+		t.Helper()
+		assert.NoError(t, err)
+		if s == nil {
+			t.Fatal("unexpected nil *string")
+		}
+		return *s
+	}
+
+	// derefNumber unwraps a (*float64, error) return.
+	derefNumber := func(n *float64, err error) float64 {
+		t.Helper()
+		assert.NoError(t, err)
+		if n == nil {
+			t.Fatal("unexpected nil *float64")
+		}
+		return *n
+	}
+
 	// First make sure that we get the default value before repository-context is added:
-	stringValue, err := repository.GetString("TestFeature1")
-	assert.NoError(t, err)
-	assert.Equal(t, "this is the default value", stringValue)
+	assert.Equal(t, "this is the default value", derefString(repository.GetString("TestFeature1")))
 
 	// See if we can match the "country-thailand" attribute:
-	stringValue, err = repository.
-		WithContext(&models.Context{Country: models.ContextCountryThailand}).
-		GetString("TestFeature1")
-	assert.Equal(t, "this is for the thais", stringValue)
-	assert.NoError(t, err)
+	assert.Equal(t, "this is for the thais",
+		derefString(repository.WithContext(&models.Context{Country: models.ContextCountryThailand}).GetString("TestFeature1")))
 
 	// See if we can match the "platform-unix" attribute:
-	stringValue, err = repository.
-		WithContext(&models.Context{Platform: models.ContextPlatformMacos}).
-		GetString("TestFeature1")
-	assert.Equal(t, "this is for unix users", stringValue)
-	assert.NoError(t, err)
+	assert.Equal(t, "this is for unix users",
+		derefString(repository.WithContext(&models.Context{Platform: models.ContextPlatformMacos}).GetString("TestFeature1")))
 
 	// See if we can match the "device-notmobile" attribute:
-	stringValue, err = repository.
-		WithContext(&models.Context{Device: models.ContextDeviceServer}).
-		GetString("TestFeature1")
-	assert.Equal(t, "this is not for mobile users", stringValue)
-	assert.NoError(t, err)
+	assert.Equal(t, "this is not for mobile users",
+		derefString(repository.WithContext(&models.Context{Device: models.ContextDeviceServer}).GetString("TestFeature1")))
 
 	// See if we can match the "userkey" attribute:
-	stringValue, err = repository.
-		WithContext(&models.Context{Userkey: "ออม"}).
-		GetString("TestFeature1")
-	assert.Equal(t, "this is for userkey ออม", stringValue)
-	assert.NoError(t, err)
+	assert.Equal(t, "this is for userkey ออม",
+		derefString(repository.WithContext(&models.Context{Userkey: "ออม"}).GetString("TestFeature1")))
 
 	// See if we can match the "version-less" attribute:
-	stringValue, err = repository.
-		WithContext(&models.Context{Version: "5.6.7"}).
-		GetString("TestFeature1")
-	assert.Equal(t, "version less than 15.23.4", stringValue)
-	assert.NoError(t, err)
+	assert.Equal(t, "version less than 15.23.4",
+		derefString(repository.WithContext(&models.Context{Version: "5.6.7"}).GetString("TestFeature1")))
 
 	// See if we can match the "version-lessequal" attribute:
-	stringValue, err = repository.
-		WithContext(&models.Context{Version: "15.23.4"}).
-		GetString("TestFeature1")
-	assert.Equal(t, "version less than or equal to 15.23.4", stringValue)
-	assert.NoError(t, err)
+	assert.Equal(t, "version less than or equal to 15.23.4",
+		derefString(repository.WithContext(&models.Context{Version: "15.23.4"}).GetString("TestFeature1")))
 
 	// See if we can match the "version-greater" attribute:
-	stringValue, err = repository.
-		WithContext(&models.Context{Version: "16.0.1"}).
-		GetString("TestFeature1")
-	assert.Equal(t, "version greater than 16.0.0", stringValue)
-	assert.NoError(t, err)
+	assert.Equal(t, "version greater than 16.0.0",
+		derefString(repository.WithContext(&models.Context{Version: "16.0.1"}).GetString("TestFeature1")))
 
 	// See if we can match the "version-greaterequals" attribute:
-	stringValue, err = repository.
-		WithContext(&models.Context{Version: "16.0.0"}).
-		GetString("TestFeature1")
-	assert.Equal(t, "version greater than or equal to 16.0.0", stringValue)
-	assert.NoError(t, err)
+	assert.Equal(t, "version greater than or equal to 16.0.0",
+		derefString(repository.WithContext(&models.Context{Version: "16.0.0"}).GetString("TestFeature1")))
 
 	// Look for a 33% rule (based on a pre-calculated hash):
-	stringValue, err = repository.
-		WithContext(&models.Context{Userkey: "1111111111"}).
-		GetString("TestFeature2")
-	assert.Equal(t, "this is for the 33 percent", stringValue)
-	assert.NoError(t, err)
+	assert.Equal(t, "this is for the 33 percent",
+		derefString(repository.WithContext(&models.Context{Userkey: "1111111111"}).GetString("TestFeature2")))
 
 	// Look for a 66% rule (based on a pre-calculated hash):
-	stringValue, err = repository.
-		WithContext(&models.Context{
-			Userkey: "1111111111",
-			Session: "4444444444",
-		}).
-		GetString("TestFeature2")
-	assert.Equal(t, "this is for the 66 percent", stringValue)
-	assert.NoError(t, err)
+	assert.Equal(t, "this is for the 66 percent",
+		derefString(repository.WithContext(&models.Context{Userkey: "1111111111", Session: "4444444444"}).GetString("TestFeature2")))
 
 	// Get a default boolean value:
 	booleanValue, err := repository.
@@ -317,37 +302,22 @@ func TestClientWithContext(t *testing.T) {
 	assert.Equal(t, true, booleanValue)
 
 	// Get a default json value:
-	jsonValue, err := repository.
-		WithContext(&models.Context{Userkey: time.Now().String()}).
-		GetRawJSON("TestJSON")
-	assert.NoError(t, err)
-	assert.Equal(t, `{"test": "something"}`, jsonValue)
+	assert.Equal(t, `{"test": "something"}`,
+		derefString(repository.WithContext(&models.Context{Userkey: time.Now().String()}).GetRawJSON("TestJSON")))
 
 	// Get a default number value:
-	numberValue, err := repository.
-		WithContext(&models.Context{Userkey: time.Now().String()}).
-		GetNumber("TestNumber")
-	assert.NoError(t, err)
-	assert.Equal(t, float64(54321), numberValue)
+	assert.Equal(t, float64(54321),
+		derefNumber(repository.WithContext(&models.Context{Userkey: time.Now().String()}).GetNumber("TestNumber")))
 
 	// Get a default string value:
-	stringValue, err = repository.
-		WithContext(&models.Context{Userkey: time.Now().String()}).
-		GetString("TestString")
-	assert.NoError(t, err)
-	assert.Equal(t, "this is another string", stringValue)
+	assert.Equal(t, "this is another string",
+		derefString(repository.WithContext(&models.Context{Userkey: time.Now().String()}).GetString("TestString")))
 
 	// See if we can match the "custom-bool" attribute:
-	stringValue, err = repository.
-		WithContext(&models.Context{Custom: map[string]interface{}{"custom-bool": true}}).
-		GetString("TestFeature1")
-	assert.Equal(t, "you have the custom bool", stringValue)
-	assert.NoError(t, err)
+	assert.Equal(t, "you have the custom bool",
+		derefString(repository.WithContext(&models.Context{Custom: map[string]interface{}{"custom-bool": true}}).GetString("TestFeature1")))
 
 	// See if we can match the "custom-string" attribute:
-	stringValue, err = repository.
-		WithContext(&models.Context{Custom: map[string]interface{}{"custom-string": "this is it"}}).
-		GetString("TestFeature1")
-	assert.Equal(t, "you have the custom string", stringValue)
-	assert.NoError(t, err)
+	assert.Equal(t, "you have the custom string",
+		derefString(repository.WithContext(&models.Context{Custom: map[string]interface{}{"custom-string": "this is it"}}).GetString("TestFeature1")))
 }
