@@ -52,12 +52,12 @@ func TestStreamingClientFeatures(t *testing.T) {
 	client.Connect()
 
 	// Look for a feature that doesn't exist:
-	_, _, _, err := repo.GetFeature("something-that-does-not-exist", false)
+	_, _, _, err := repo.GetFeature("something-that-does-not-exist")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrFeatureNotFound{}, err)
 
 	// Look for a feature that DOES exist:
-	feature, _, _, err := repo.GetFeature("stringfeature", false)
+	feature, _, _, err := repo.GetFeature("stringfeature")
 	assert.NoError(t, err)
 	assert.Equal(t, models.FeatureValueType("STRING"), feature.Type)
 }

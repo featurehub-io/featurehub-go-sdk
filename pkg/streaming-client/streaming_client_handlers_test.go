@@ -73,12 +73,12 @@ func TestStreamingClientHandlers(t *testing.T) {
 	client.Connect()
 
 	// Make sure new features with old versions don't clobber values:
-	anotherFeature, _, _, err := repository.GetFeature("anotherfeature", false)
+	anotherFeature, _, _, err := repository.GetFeature("anotherfeature")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(3), anotherFeature.Version)
 
 	// Make sure features get deleted:
-	deletedFeature, _, _, err := repository.GetFeature("featuretodelete", false)
+	deletedFeature, _, _, err := repository.GetFeature("featuretodelete")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrFeatureNotFound{}, err)
 	assert.Nil(t, deletedFeature)

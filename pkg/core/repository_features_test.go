@@ -50,12 +50,12 @@ func TestRepositoryFeatures(t *testing.T) {
 	repo.ProcessFeatures(features)
 
 	// Look for a feature that doesn't exist:
-	_, _, _, err = repo.GetFeature("something-that-does-not-exist", false)
+	_, _, _, err = repo.GetFeature("something-that-does-not-exist")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrFeatureNotFound{}, err)
 
 	// Look for a feature that DOES exist:
-	feature, matched, value, err := repo.GetFeature("stringfeature", false)
+	feature, matched, value, err := repo.GetFeature("stringfeature")
 	assert.NoError(t, err)
 	assert.Equal(t, models.FeatureValueType("STRING"), feature.Type)
 	assert.Equal(t, false, matched)

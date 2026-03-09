@@ -51,7 +51,7 @@ func (cc *ClientWithContext) String(featureKey string) string {
 // GetBoolean searches for a feature by key, returns the value as a boolean:
 func (cc *ClientWithContext) GetBoolean(key string) (bool, error) {
 	// Use the existing GetFeature method:
-	fs, matched, value, err := cc.featureRepository.GetInternalBoolean(key, false)
+	fs, matched, value, err := cc.featureRepository.GetInternalBoolean(key)
 	if err != nil {
 		return false, err
 	}
@@ -81,7 +81,7 @@ func (cc *ClientWithContext) GetBoolean(key string) (bool, error) {
 
 // GetNumber searches for a feature by key, returns the value as a float64:
 func (cc *ClientWithContext) GetNumber(key string) (*float64, error) {
-	fs, matched, value, err := cc.featureRepository.GetInternalNumber(key, false)
+	fs, matched, value, err := cc.featureRepository.GetInternalNumber(key)
 
 	if matched || err != nil {
 		return value, err
@@ -107,7 +107,7 @@ func (cc *ClientWithContext) GetNumber(key string) (*float64, error) {
 }
 
 func (cc *ClientWithContext) getContextString(key string, valueType models.FeatureValueType) (*string, error) {
-	fs, matched, value, err := cc.featureRepository.GetInternalString(key, false, valueType)
+	fs, matched, value, err := cc.featureRepository.GetInternalString(key, valueType)
 
 	// if matched, err will be nil
 	if matched || err != nil {

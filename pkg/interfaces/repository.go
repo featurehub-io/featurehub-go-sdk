@@ -31,13 +31,13 @@ type RepositoryContext interface {
 // We generally don't want folks getting a hold of raw features as we can't treat the getting of their values
 // properly, so we have to do it wrapped. But we do need to be able to get the raw feature the originating repository.
 type FeatureRepository interface {
-	GetFeature(featureKey string, recordUsage bool) (feature *models.FeatureState, matched bool, value interface{}, err error)
+	GetFeature(featureKey string) (feature *models.FeatureState, matched bool, value interface{}, err error)
 	// GetInternalString - nil is a valid value for string data types
-	GetInternalString(key string, recordUsage bool, expectedType models.FeatureValueType) (feature *models.FeatureState, matched bool, value *string, err error)
+	GetInternalString(key string, expectedType models.FeatureValueType) (feature *models.FeatureState, matched bool, value *string, err error)
 	// GetInternalNumber - nil is a valid value for numeric data types
-	GetInternalNumber(key string, recordUsage bool) (feature *models.FeatureState, matched bool, value *float64, err error)
+	GetInternalNumber(key string) (feature *models.FeatureState, matched bool, value *float64, err error)
 	// GetInternalBoolean - will always be true or false
-	GetInternalBoolean(key string, recordUsage bool) (feature *models.FeatureState, matched bool, value bool, err error)
+	GetInternalBoolean(key string) (feature *models.FeatureState, matched bool, value bool, err error)
 	GetFeatures() []*models.FeatureIdentity
 	// UsageProvider simply gives us the ability to create Usage structures, and allows the user to overwrite it with their own
 	UsageProvider() usage.ProviderFactory

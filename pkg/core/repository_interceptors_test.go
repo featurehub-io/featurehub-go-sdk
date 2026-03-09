@@ -55,7 +55,7 @@ func TestInterceptorOverridesFeatureValue(t *testing.T) {
 	seedRepo(repo)
 	repo.AddValueInterceptor(interceptorThatMatches(true))
 
-	_, matched, value, err := repo.GetFeature("flag", false)
+	_, matched, value, err := repo.GetFeature("flag")
 
 	require.NoError(t, err)
 	assert.True(t, matched, "matched should be true when interceptor fires")
@@ -67,7 +67,7 @@ func TestInterceptorNoMatchFallsThroughToFeatureValue(t *testing.T) {
 	seedRepo(repo)
 	repo.AddValueInterceptor(interceptorThatMisses())
 
-	_, matched, value, err := repo.GetFeature("flag", false)
+	_, matched, value, err := repo.GetFeature("flag")
 
 	require.NoError(t, err)
 	assert.False(t, matched, "matched should be false when no interceptor fires")
@@ -79,7 +79,7 @@ func TestInterceptorCalledWhenFeatureNotInRepository(t *testing.T) {
 	// No features loaded; interceptor provides value for unknown key.
 	repo.AddValueInterceptor(interceptorThatMatches("injected"))
 
-	_, matched, value, err := repo.GetFeature("unknown-key", false)
+	_, matched, value, err := repo.GetFeature("unknown-key")
 
 	require.NoError(t, err, "no error when interceptor matches an unknown feature")
 	assert.True(t, matched)
@@ -90,7 +90,7 @@ func TestNoInterceptorMatchOnUnknownFeatureReturnsNotFound(t *testing.T) {
 	repo := createRepository()
 	repo.AddValueInterceptor(interceptorThatMisses())
 
-	_, _, _, err := repo.GetFeature("unknown-key", false)
+	_, _, _, err := repo.GetFeature("unknown-key")
 
 	assert.Error(t, err, "should return ErrFeatureNotFound when interceptor misses and feature absent")
 }
@@ -108,7 +108,7 @@ func TestInterceptorReceivesCorrectKeyAndFeatureState(t *testing.T) {
 		return false, nil
 	})
 
-	repo.GetFeature("flag", false) //nolint:errcheck
+	repo.GetFeature("flag") //nolint:errcheck
 
 	assert.Equal(t, "flag", capturedKey)
 	require.NotNil(t, capturedFeature)
@@ -126,7 +126,7 @@ func TestInterceptorReceivesNilFeatureWhenKeyAbsent(t *testing.T) {
 		return false, nil
 	})
 
-	repo.GetFeature("absent", false) //nolint:errcheck
+	repo.GetFeature("absent") //nolint:errcheck
 
 	assert.True(t, captureTriggered)
 	assert.Nil(t, capturedFeature, "interceptor should receive nil for unknown features")
@@ -148,7 +148,7 @@ func TestMultipleInterceptorsFirstMatchWins(t *testing.T) {
 		return true, "second"
 	})
 
-	_, matched, value, err := repo.GetFeature("flag", false)
+	_, matched, value, err := repo.GetFeature("flag")
 
 	require.NoError(t, err)
 	assert.True(t, matched)
@@ -162,7 +162,7 @@ func TestMultipleInterceptorsAllMissFallsThrough(t *testing.T) {
 	repo.AddValueInterceptor(interceptorThatMisses())
 	repo.AddValueInterceptor(interceptorThatMisses())
 
-	_, matched, value, err := repo.GetFeature("label", false)
+	_, matched, value, err := repo.GetFeature("label")
 
 	require.NoError(t, err)
 	assert.False(t, matched)
@@ -222,7 +222,7 @@ func TestInterceptorMatchedPropagatedFromGetInternalBoolean(t *testing.T) {
 	seedRepo(repo)
 	repo.AddValueInterceptor(interceptorThatMatches(true))
 
-	_, matched, value, err := repo.GetInternalBoolean("flag", false)
+	_, matched, value, err := repo.GetInternalBoolean("flag")
 
 	require.NoError(t, err)
 	assert.True(t, matched)
@@ -234,7 +234,7 @@ func TestInterceptorMatchedPropagatedFromGetInternalNumber(t *testing.T) {
 	seedRepo(repo)
 	repo.AddValueInterceptor(interceptorThatMatches(float64(7)))
 
-	_, matched, value, err := repo.GetInternalNumber("count", false)
+	_, matched, value, err := repo.GetInternalNumber("count")
 
 	require.NoError(t, err)
 	assert.True(t, matched)
@@ -247,7 +247,7 @@ func TestInterceptorMatchedPropagatedFromGetInternalString(t *testing.T) {
 	seedRepo(repo)
 	repo.AddValueInterceptor(interceptorThatMatches("injected"))
 
-	_, matched, value, err := repo.GetInternalString("label", false, models.TypeString)
+	_, matched, value, err := repo.GetInternalString("label", models.TypeString)
 
 	require.NoError(t, err)
 	assert.True(t, matched)

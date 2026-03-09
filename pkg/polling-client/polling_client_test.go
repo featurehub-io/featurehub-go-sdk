@@ -317,11 +317,11 @@ func TestResponseFlattensFeatureSetsEnvironmentID(t *testing.T) {
 		},
 	})
 
-	fs, _, _, err := repo.GetFeature("flag-a", false)
+	fs, _, _, err := repo.GetFeature("flag-a")
 	require.NoError(t, err)
 	assert.Equal(t, "env-abc", fs.EnvironmentID)
 
-	fs, _, _, err = repo.GetFeature("flag-b", false)
+	fs, _, _, err = repo.GetFeature("flag-b")
 	require.NoError(t, err)
 	assert.Equal(t, "env-abc", fs.EnvironmentID)
 }
@@ -339,11 +339,11 @@ func TestResponseMultipleEnvironmentsFlattened(t *testing.T) {
 		}},
 	})
 
-	fs1, _, _, err := repo.GetFeature("flag-1", false)
+	fs1, _, _, err := repo.GetFeature("flag-1")
 	require.NoError(t, err)
 	assert.Equal(t, "env-1", fs1.EnvironmentID)
 
-	fs2, _, _, err := repo.GetFeature("flag-2", false)
+	fs2, _, _, err := repo.GetFeature("flag-2")
 	require.NoError(t, err)
 	assert.Equal(t, "env-2", fs2.EnvironmentID)
 }
