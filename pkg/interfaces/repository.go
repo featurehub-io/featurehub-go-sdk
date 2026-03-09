@@ -51,6 +51,9 @@ type Context interface {
 	Attributes() *models.Context
 	// WithContext - replaces the existing context with this new one
 	WithContext(ctx *models.Context) Context
+	RecordUsageEvent(event usage.UsageEvent)
+	GetContextUsage() usage.UsageEvent
+	RecordNamedUsage(name string, additionalParams usage.ContextRecord)
 }
 
 type InternalRepository interface {

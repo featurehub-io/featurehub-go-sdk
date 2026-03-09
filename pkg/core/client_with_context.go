@@ -66,9 +66,13 @@ func (cc *ClientWithContext) GetBoolean(key string) (bool, error) {
 		if calculatedValue := fs.Strategies.Calculate(cc.Context); calculatedValue != nil {
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(bool); ok {
+				cc.used(key, fs.ID, strategyValue, fs.Type)
+
 				return strategyValue, nil
 			}
 		}
+
+		cc.used(key, fs.ID, value, fs.Type)
 	}
 
 	// Return the default value as a fall-back:
@@ -89,9 +93,13 @@ func (cc *ClientWithContext) GetNumber(key string) (*float64, error) {
 
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(float64); ok {
+				cc.used(key, fs.ID, strategyValue, fs.Type)
+
 				return &strategyValue, nil
 			}
 		}
+
+		cc.used(key, fs.ID, value, fs.Type)
 	}
 
 	// Return the default value as a fall-back:
@@ -112,9 +120,13 @@ func (cc *ClientWithContext) getContextString(key string, valueType models.Featu
 
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(string); ok {
+				cc.used(key, fs.ID, strategyValue, fs.Type)
+
 				return &strategyValue, nil
 			}
 		}
+
+		cc.used(key, fs.ID, value, fs.Type)
 	}
 
 	// Return the default value as a fall-back:
@@ -172,7 +184,13 @@ func (cc *ClientWithContext) DeleteNotifier(featureKey, notifierUUID string) err
 }
 
 func (cc *ClientWithContext) used(key string, id string, value interface{}, valueType models.FeatureValueType) {
+	userKey, _ := cc.UniqueKey()
 
+	cc.RecordUsageEvent(
+		cc.featureRepository.UsageProvider().NewUsageFeature(
+			usage.NewUsageValue(id, key, value, valueType),
+			cc.fullContext(),
+			userKey))
 }
 
 /**
@@ -185,8 +203,8 @@ func (cc *ClientWithContext) used(key string, id string, value interface{}, valu
  */
 
 // recordUsageEvent(event: any | UsageEvent): any;
-func (cc *ClientWithContext) RecordUsageEvent(event usage.UsageEvent) usage.UsageEvent {
-	return event
+func (cc *ClientWithContext) RecordUsageEvent(event usage.UsageEvent) {
+	cc.featureRepository.EmitUsageEvent(cc.fillEvent(event))
 }
 
 /**
@@ -197,8 +215,8 @@ func (cc *ClientWithContext) GetContextUsage() usage.UsageEvent {
 	return cc.fillEvent(cc.featureRepository.UsageProvider().NewUsageContextCollectionEvent(""))
 }
 
-func (cc *ClientWithContext) RecordNamedUsage(name string, additionalParams *map[string]interface{}) {
-
+func (cc *ClientWithContext) RecordNamedUsage(name string, additionalParams usage.ContextRecord) {
+	cc.RecordUsageEvent(cc.fillEvent(cc.featureRepository.UsageProvider().NewNamedUsageCollection(name, additionalParams)))
 }
 
 func (cc *ClientWithContext) fillEvent(event usage.UsageEvent) usage.UsageEvent {
