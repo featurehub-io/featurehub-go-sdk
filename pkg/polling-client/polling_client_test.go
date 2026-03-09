@@ -201,7 +201,7 @@ func TestPollPassivePollsWhenCacheExpired(t *testing.T) {
 	err := c.Poll()
 
 	assert.NoError(t, err)
-	assert.Equal(t, 1, mock.getPollCount())
+	assert.Eventually(t, func() bool { return mock.getPollCount() == 1 }, time.Second, time.Millisecond)
 }
 
 func TestPollReturnsErrorWhenNotStartable(t *testing.T) {
@@ -222,7 +222,7 @@ func TestContextChangeSetsHeaderAndPolls(t *testing.T) {
 
 	c.ContextChange("userkey=alice")
 
-	assert.Equal(t, 1, mock.getPollCount())
+	assert.Eventually(t, func() bool { return mock.getPollCount() == 1 }, time.Second, time.Millisecond)
 	mock.mu.Lock()
 	assert.Equal(t, "userkey=alice", mock.lastHeader)
 	mock.mu.Unlock()
@@ -370,8 +370,9 @@ func TestPassiveScheduleNextPollSetsCacheExpiry(t *testing.T) {
 	before := time.Now()
 	c.Poll()
 
-	c.mu.Lock()
-	expiry := c.whenPollingCacheExpires
-	c.mu.Unlock()
-	assert.True(t, expiry.After(before))
+	assert.Eventually(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.whenPollingCacheExpires.After(before)
+	}, time.Second, time.Millisecond)
 }

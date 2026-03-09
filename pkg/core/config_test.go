@@ -114,6 +114,70 @@ func TestRegisterMultipleUsagePluginsAllReceiveEvents(t *testing.T) {
 	assert.Equal(t, "user-2", p2.waitForEvent(t, time.Second).UserKey())
 }
 
+// mockEdgeClient records Poll calls.
+type mockEdgeClient struct {
+	pollCalls int
+}
+
+func (m *mockEdgeClient) Connect()               {}
+func (m *mockEdgeClient) Poll() error            { m.pollCalls++; return nil }
+func (m *mockEdgeClient) ContextChange(_ string) {}
+func (m *mockEdgeClient) Close()                 {}
+
+func TestPassiveRestPluginCallsPollOnUsageEvent(t *testing.T) {
+	config := NewConfig("http://localhost", "default/env/key", nil)
+	config.PassiveRest(time.Minute)
+	config.checkRepository()
+
+	mockClient := &mockEdgeClient{}
+	config.client = mockClient
+
+	config.repository.EmitUsageEvent(simpleEvent("user-1"))
+
+	// dispatch is async — wait briefly for the goroutine to complete
+	assert.Eventually(t, func() bool { return mockClient.pollCalls == 1 }, time.Second, time.Millisecond)
+}
+
+func TestPassiveRestPluginDoesNotPollWhenClientIsNil(t *testing.T) {
+	config := NewConfig("http://localhost", "default/env/key", nil)
+	config.PassiveRest(time.Minute)
+	config.checkRepository()
+	// client remains nil
+
+	assert.NotPanics(t, func() {
+		config.repository.EmitUsageEvent(simpleEvent("user-1"))
+	})
+}
+
+func TestPassiveRestPluginDoesNotPollForActiveRest(t *testing.T) {
+	config := NewConfig("http://localhost", "default/env/key", nil)
+	config.ActiveRest(time.Minute)
+	config.checkRepository()
+
+	mockClient := &mockEdgeClient{}
+	config.client = mockClient
+
+	config.repository.EmitUsageEvent(simpleEvent("user-1"))
+
+	// Give the goroutine time to run if it were going to
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 0, mockClient.pollCalls)
+}
+
+func TestPassiveRestPluginDoesNotPollForStreaming(t *testing.T) {
+	config := NewConfig("http://localhost", "default/env/key", nil)
+	config.Streaming()
+	config.checkRepository()
+
+	mockClient := &mockEdgeClient{}
+	config.client = mockClient
+
+	config.repository.EmitUsageEvent(simpleEvent("user-1"))
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 0, mockClient.pollCalls)
+}
+
 func TestConfigValidation(t *testing.T) {
 
 	// Make a new config with nothing set:

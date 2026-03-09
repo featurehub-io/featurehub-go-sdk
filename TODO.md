@@ -41,4 +41,4 @@ Strategy matching logic:
 	- Otherwise continue with the next strategy
 - If no strategies match then return the default value for the feature
 
-in SetRepository on Config, when a usage adapter is created, register a new plugin which has access to the current Config and when it receives an event, it checks if the Config's client has been created and if 
+in SetRepository on Config, when a usage adapter is created, register a new plugin which has access to the current Config and when it receives an event, it checks if the Config's client has been created and if EdgeType() is PassiveRest and if so, calls Poll() on the client 

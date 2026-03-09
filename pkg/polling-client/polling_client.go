@@ -123,7 +123,7 @@ func (c *FeatureHubPollingClient) Poll() error {
 
 	c.mu.Unlock()
 
-	c.pollFunc(nil, nil)
+	go c.pollFunc(nil, nil)
 	return nil
 }
 
@@ -131,7 +131,7 @@ func (c *FeatureHubPollingClient) Poll() error {
 // Used for server-side feature evaluation when the user context changes.
 func (c *FeatureHubPollingClient) ContextChange(header string) {
 	c.polling.AttributeHeader(header)
-	c.pollFunc(nil, nil)
+	go c.pollFunc(nil, nil)
 }
 
 // Close stops the polling client and any pending timers.

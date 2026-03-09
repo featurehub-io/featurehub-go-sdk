@@ -69,6 +69,19 @@ func NewConfig(serverAddress, sdkKey string, edgeProvider EdgeProviderFunc) *Con
 	}
 }
 
+// passiveRestPollPlugin triggers a passive-REST poll whenever a usage event is emitted.
+type passiveRestPollPlugin struct {
+	config *Config
+}
+
+func (p *passiveRestPollPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
+
+func (p *passiveRestPollPlugin) Send(_ usage.UsageEvent) {
+	if p.config.client != nil && p.config.requestedEdgeType == EdgePassiveRest {
+		p.config.client.Poll() //nolint:errcheck
+	}
+}
+
 func (c *Config) SetRepository(repository *ClientFeatureHubRepository) {
 	if repository != c.repository {
 		if c.usageAdapter != nil {
@@ -76,6 +89,7 @@ func (c *Config) SetRepository(repository *ClientFeatureHubRepository) {
 		}
 		c.repository = repository
 		c.usageAdapter = usage.NewAdapter(repository, c.Logger)
+		c.usageAdapter.RegisterPlugin(&passiveRestPollPlugin{config: c})
 	}
 }
 
