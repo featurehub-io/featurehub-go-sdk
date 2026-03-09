@@ -40,3 +40,5 @@ Strategy matching logic:
 	- If all attributes match then we return the value from this strategy
 	- Otherwise continue with the next strategy
 - If no strategies match then return the default value for the feature
+
+in SetRepository on Config, when a usage adapter is created, register a new plugin which has access to the current Config and when it receives an event, it checks if the Config's client has been created and if 

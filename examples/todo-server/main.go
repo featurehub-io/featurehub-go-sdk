@@ -71,7 +71,7 @@ func main() {
 	r.HandleFunc("/todo/{user}/{id}/resolve", resolveHandler).Methods(http.MethodPut)
 	r.HandleFunc("/todo/{user}/{id}", deleteTodoHandler).Methods(http.MethodDelete)
 
-	log.Printf("Listening on :%s using %s with an interval of %s", port, fhConfig.RequestedEdgeType, fhConfig.Timeout())
+	log.Printf("Listening on :%s using %s with an interval of %s", port, fhConfig.EdgeType(), fhConfig.Timeout())
 	log.Fatal(http.ListenAndServe(":"+port, r))
 }
 

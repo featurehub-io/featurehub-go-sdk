@@ -49,13 +49,13 @@ type FeatureHubPollingClient struct {
 var _ interfaces.EdgeClient = (*FeatureHubPollingClient)(nil)
 
 // NewPollingClient creates a FeatureHubPollingClient from the provided config.
-// config.RequestedEdgeType must be core.EdgeActiveRest or core.EdgePassiveRest.
+// config.EdgeType() must be core.EdgeActiveRest or core.EdgePassiveRest.
 func NewPollingClient(config *core.Config, repository interfaces.InternalRepository) (*FeatureHubPollingClient, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
 
-	active := config.RequestedEdgeType != core.EdgePassiveRest
+	active := config.EdgeType() != core.EdgePassiveRest
 
 	c := &FeatureHubPollingClient{
 		config:                  config,

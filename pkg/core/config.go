@@ -34,8 +34,8 @@ type Config struct {
 	usageAdapter      *usage.Adapter
 	EdgeProvider      EdgeProviderFunc
 	fatalErrorHandler *interfaces.ErrorFunc // A user-provided handler func for fatal asynchronous errors
-	RequestedEdgeType EdgeType              // used to determine which edge repository we should use
-	timeout           time.Duration         // timeout if using polling
+	requestedEdgeType EdgeType
+	timeout           time.Duration // timeout if using polling
 	client            interfaces.EdgeClient
 }
 
@@ -62,7 +62,7 @@ func NewConfig(serverAddress, sdkKey string, edgeProvider EdgeProviderFunc) *Con
 		LogLevel:          defaultLogLevel,
 		Logger:            logger,
 		SDKKey:            sdkKey,
-		RequestedEdgeType: defaultEdge,
+		requestedEdgeType: defaultEdge,
 		ServerAddress:     serverAddress,
 		EdgeProvider:      edgeProvider,
 		timeout:           timeout,
@@ -79,22 +79,36 @@ func (c *Config) SetRepository(repository *ClientFeatureHubRepository) {
 	}
 }
 
+func (c *Config) closeEdge() {
+	if c.client != nil {
+		c.client.Close()
+		c.client = nil
+	}
+}
+
 func (c *Config) PassiveRest(interval time.Duration) *Config {
-	c.RequestedEdgeType = EdgePassiveRest
+	c.closeEdge()
+	c.requestedEdgeType = EdgePassiveRest
 	c.timeout = interval
 	return c
 }
 
 func (c *Config) ActiveRest(timeout time.Duration) *Config {
-	c.RequestedEdgeType = EdgeActiveRest
+	c.closeEdge()
+	c.requestedEdgeType = EdgeActiveRest
 	c.timeout = timeout
 	return c
 }
 
 func (c *Config) Streaming() *Config {
-	c.RequestedEdgeType = EdgeStreaming
+	c.closeEdge()
+	c.requestedEdgeType = EdgeStreaming
 	c.timeout = time.Millisecond * 0
 	return c
+}
+
+func (c *Config) EdgeType() EdgeType {
+	return c.requestedEdgeType
 }
 
 // IsReady - Is the repository ready, does it have its initial state?

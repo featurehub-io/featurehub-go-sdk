@@ -17,6 +17,7 @@ type StreamingClient struct {
 	config            *core.Config
 	fatalErrorHandler interfaces.ErrorFunc
 	isRunning         bool
+	stopped           bool
 	logger            *logrus.Logger
 	repository        interfaces.InternalRepository
 }
@@ -83,8 +84,15 @@ func (c *StreamingClient) fatalErrorFunc(err error, message string, details map[
 	c.logger.WithError(err).WithFields(details).Fatal(message)
 }
 
+// Poll - does nothing, its only used for PassiveRest
+func (c *StreamingClient) Poll() error { return nil }
+
 // Start begins handling events from the streamer:
 func (c *StreamingClient) Connect() {
+	if c.stopped {
+		c.logger.Warn("StreamingClient has been closed and cannot be restarted")
+		return
+	}
 
 	// Set the isRunning flag:
 	c.isRunning = true
@@ -99,6 +107,13 @@ func (c *StreamingClient) Connect() {
 			time.Sleep(time.Second)
 		}
 	}
+}
+
+// Close shuts down the SSE connection and event handlers, and prevents reconnection.
+func (c *StreamingClient) Close() {
+	c.isRunning = false
+	c.stopped = true
+	c.apiClient.Close()
 }
 
 // WithFatalErrorHandler configures an error handler which will be called for asynchronous fatal errors:

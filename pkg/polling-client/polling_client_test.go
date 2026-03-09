@@ -78,16 +78,14 @@ func newTestClient(active bool, mock *mockPollingService) (*FeatureHubPollingCli
 	logger := newTestLogger()
 	repo := core.NewClientFeatureHubRepository(logger)
 
-	edgeType := core.EdgeType(core.EdgeActiveRest)
-	if !active {
-		edgeType = core.EdgeType(core.EdgePassiveRest)
+	cfg := &core.Config{Logger: logger}
+	if active {
+		cfg.ActiveRest(0)
+	} else {
+		cfg.PassiveRest(0)
 	}
-
 	c := &FeatureHubPollingClient{
-		config: &core.Config{
-			Logger:            logger,
-			RequestedEdgeType: edgeType,
-		},
+		config:                  cfg,
 		repository:              repo,
 		polling:                 mock,
 		logger:                  logger,

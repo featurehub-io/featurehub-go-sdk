@@ -16,7 +16,7 @@ import (
 // that wires core, streaming-client, and polling-client together.
 func New(serverAddress, sdkKey string) *core.Config {
 	return core.NewConfig(serverAddress, sdkKey, func(config *core.Config, internalRepository interfaces.InternalRepository) (interfaces.EdgeClient, error) {
-		switch config.RequestedEdgeType {
+		switch config.EdgeType() {
 		case core.EdgeStreaming:
 			return streaming.NewStreamingClient(config, internalRepository)
 		case core.EdgeActiveRest, core.EdgePassiveRest:
