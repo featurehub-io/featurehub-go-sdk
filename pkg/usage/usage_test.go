@@ -2,6 +2,7 @@ package usage
 
 import (
 	"testing"
+	"time"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/sirupsen/logrus"
@@ -276,13 +277,33 @@ func (m *mockRepo) emit(event UsageEvent) {
 	}
 }
 
-// mockPlugin records calls to Send.
+// mockPlugin records calls to Send via a buffered channel.
 type mockPlugin struct {
-	received []UsageEvent
+	ch chan UsageEvent
+}
+
+func newMockPlugin() *mockPlugin {
+	return &mockPlugin{ch: make(chan UsageEvent, 8)}
 }
 
 func (p *mockPlugin) DefaultPluginAttributes() ContextRecord { return nil }
-func (p *mockPlugin) Send(event UsageEvent)                  { p.received = append(p.received, event) }
+func (p *mockPlugin) Send(event UsageEvent)                  { p.ch <- event }
+
+// wait blocks until n events arrive or the timeout elapses.
+func (p *mockPlugin) wait(t *testing.T, n int, timeout time.Duration) []UsageEvent {
+	t.Helper()
+	events := make([]UsageEvent, 0, n)
+	deadline := time.After(timeout)
+	for len(events) < n {
+		select {
+		case e := <-p.ch:
+			events = append(events, e)
+		case <-deadline:
+			t.Fatalf("timed out waiting for %d events; got %d", n, len(events))
+		}
+	}
+	return events
+}
 
 func newTestLogger() *logrus.Logger {
 	l := logrus.New()
@@ -293,29 +314,29 @@ func newTestLogger() *logrus.Logger {
 func TestAdapterDispatchesToPlugin(t *testing.T) {
 	repo := newMockRepo()
 	adapter := NewAdapter(repo, newTestLogger())
-	plugin := &mockPlugin{}
+	plugin := newMockPlugin()
 	adapter.RegisterPlugin(plugin)
 
 	fv := &FeatureHubUsageValue{ID: "1", Key: "f", Value: "on"}
 	event := NewUsageEventWithFeature(fv, nil, "")
 	repo.emit(event)
 
-	assert.Len(t, plugin.received, 1)
-	assert.Equal(t, event, plugin.received[0])
+	received := plugin.wait(t, 1, time.Second)
+	assert.Equal(t, event, received[0])
 }
 
 func TestAdapterDispatchesToMultiplePlugins(t *testing.T) {
 	repo := newMockRepo()
 	adapter := NewAdapter(repo, newTestLogger())
-	p1, p2 := &mockPlugin{}, &mockPlugin{}
+	p1, p2 := newMockPlugin(), newMockPlugin()
 	adapter.RegisterPlugin(p1)
 	adapter.RegisterPlugin(p2)
 
 	fv := &FeatureHubUsageValue{ID: "1", Key: "f", Value: "off"}
 	repo.emit(NewUsageEventWithFeature(fv, nil, ""))
 
-	assert.Len(t, p1.received, 1)
-	assert.Len(t, p2.received, 1)
+	p1.wait(t, 1, time.Second)
+	p2.wait(t, 1, time.Second)
 }
 
 func TestAdapterPanicInPluginDoesNotStopOthers(t *testing.T) {
@@ -323,20 +344,20 @@ func TestAdapterPanicInPluginDoesNotStopOthers(t *testing.T) {
 	adapter := NewAdapter(repo, newTestLogger())
 
 	panicPlugin := &panickyPlugin{}
-	goodPlugin := &mockPlugin{}
+	goodPlugin := newMockPlugin()
 	adapter.RegisterPlugin(panicPlugin)
 	adapter.RegisterPlugin(goodPlugin)
 
 	fv := &FeatureHubUsageValue{ID: "1", Key: "f", Value: "on"}
 	repo.emit(NewUsageEventWithFeature(fv, nil, ""))
 
-	assert.Len(t, goodPlugin.received, 1, "good plugin should still receive events after panic")
+	goodPlugin.wait(t, 1, time.Second)
 }
 
 func TestAdapterCloseRemovesHandler(t *testing.T) {
 	repo := newMockRepo()
 	adapter := NewAdapter(repo, newTestLogger())
-	plugin := &mockPlugin{}
+	plugin := newMockPlugin()
 	adapter.RegisterPlugin(plugin)
 
 	adapter.Close()
@@ -344,7 +365,12 @@ func TestAdapterCloseRemovesHandler(t *testing.T) {
 	fv := &FeatureHubUsageValue{ID: "1", Key: "f", Value: "on"}
 	repo.emit(NewUsageEventWithFeature(fv, nil, ""))
 
-	assert.Len(t, plugin.received, 0, "plugin should not receive events after Close")
+	select {
+	case <-plugin.ch:
+		t.Fatal("plugin should not receive events after Close")
+	case <-time.After(50 * time.Millisecond):
+		// expected: nothing arrived
+	}
 }
 
 // panickyPlugin panics on Send.

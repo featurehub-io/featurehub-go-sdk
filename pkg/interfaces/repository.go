@@ -39,7 +39,10 @@ type FeatureRepository interface {
 	// GetInternalBoolean - will always be true or false
 	GetInternalBoolean(key string, recordUsage bool) (feature *models.FeatureState, matched bool, value bool, err error)
 	GetFeatures() []*models.FeatureIdentity
+	// UsageProvider simply gives us the ability to create Usage structures, and allows the user to overwrite it with their own
 	UsageProvider() usage.ProviderFactory
+	// This is called when a usage event is actually sent
+	EmitUsageEvent(event usage.UsageEvent)
 }
 
 type Context interface {

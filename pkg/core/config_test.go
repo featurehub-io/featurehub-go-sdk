@@ -7,9 +7,35 @@ import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/usage"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// chanPlugin is a test Plugin that sends received events to a channel.
+type chanPlugin struct {
+	ch chan usage.UsageEvent
+}
+
+func newChanPlugin() *chanPlugin {
+	return &chanPlugin{ch: make(chan usage.UsageEvent, 1)}
+}
+
+func (p *chanPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
+func (p *chanPlugin) Send(event usage.UsageEvent)                  { p.ch <- event }
+
+// waitForEvent blocks until the plugin receives an event or the timeout elapses.
+func (p *chanPlugin) waitForEvent(t *testing.T, timeout time.Duration) usage.UsageEvent {
+	t.Helper()
+	select {
+	case event := <-p.ch:
+		return event
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for usage event")
+		return nil
+	}
+}
 
 func TestConfig(t *testing.T) {
 
@@ -59,6 +85,33 @@ func TestClientEvaluated(t *testing.T) {
 
 	config.SDKKey = "default/environment-id/*my-secret-api-key"
 	assert.True(t, config.ClientEvaluated())
+}
+
+func TestRegisterUsagePluginReceivesEvents(t *testing.T) {
+	config := NewConfig("http://localhost", "default/env/key", nil)
+	plugin := newChanPlugin()
+
+	config.RegisterUsagePlugin(plugin)
+
+	event := simpleEvent("user-1")
+	config.repository.EmitUsageEvent(event)
+
+	received := plugin.waitForEvent(t, time.Second)
+	require.NotNil(t, received)
+	assert.Equal(t, "user-1", received.UserKey())
+}
+
+func TestRegisterMultipleUsagePluginsAllReceiveEvents(t *testing.T) {
+	config := NewConfig("http://localhost", "default/env/key", nil)
+	p1, p2 := newChanPlugin(), newChanPlugin()
+
+	config.RegisterUsagePlugin(p1)
+	config.RegisterUsagePlugin(p2)
+
+	config.repository.EmitUsageEvent(simpleEvent("user-2"))
+
+	assert.Equal(t, "user-2", p1.waitForEvent(t, time.Second).UserKey())
+	assert.Equal(t, "user-2", p2.waitForEvent(t, time.Second).UserKey())
 }
 
 func TestConfigValidation(t *testing.T) {

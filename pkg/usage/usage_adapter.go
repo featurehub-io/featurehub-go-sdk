@@ -43,7 +43,7 @@ func (a *Adapter) Close() {
 
 func (a *Adapter) dispatch(event UsageEvent) {
 	for _, p := range a.plugins {
-		func(p Plugin) {
+		go func(p Plugin) {
 			defer func() {
 				if r := recover(); r != nil {
 					a.logger.WithField("panic", r).Error("usage plugin panicked during Send")
