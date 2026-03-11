@@ -59,17 +59,19 @@ func TestSetConvertFuncNilResetsToDefault(t *testing.T) {
 // --- NewUsageValue ---
 
 func TestNewUsageValue(t *testing.T) {
-	v := NewUsageValue("id-1", "my-flag", true, models.TypeBoolean)
+	v := NewUsageValue("id-1", "my-flag", "env-1", true, models.TypeBoolean)
 	assert.Equal(t, "id-1", v.ID)
 	assert.Equal(t, "my-flag", v.Key)
+	assert.Equal(t, "env-1", v.EnvironmentID)
 	assert.Equal(t, "on", v.Value)
 }
 
 func TestNewUsageValueFromFeature(t *testing.T) {
-	fs := &models.FeatureState{ID: "fs-1", Key: "flag", Value: "hello", Type: models.TypeString}
+	fs := &models.FeatureState{ID: "fs-1", Key: "flag", EnvironmentID: "env-abc", Value: "hello", Type: models.TypeString}
 	v := NewUsageValueFromFeature(fs)
 	assert.Equal(t, "fs-1", v.ID)
 	assert.Equal(t, "flag", v.Key)
+	assert.Equal(t, "env-abc", v.EnvironmentID)
 	assert.Equal(t, "hello", v.Value)
 }
 
@@ -119,7 +121,7 @@ func TestUsageEventWithFeatureUserKey(t *testing.T) {
 }
 
 func TestUsageEventWithFeatureCollectUsageRecord(t *testing.T) {
-	fv := &FeatureHubUsageValue{ID: "id-abc", Key: "my-flag", Value: "on"}
+	fv := &FeatureHubUsageValue{ID: "id-abc", Key: "my-flag", EnvironmentID: "env-xyz", Value: "on"}
 	ctx := ContextRecord{"country": "Thailand"}
 	e := NewUsageEventWithFeature(fv, ctx, "")
 
@@ -127,7 +129,17 @@ func TestUsageEventWithFeatureCollectUsageRecord(t *testing.T) {
 	assert.Equal(t, "my-flag", rec["feature"])
 	assert.Equal(t, "on", rec["value"])
 	assert.Equal(t, "id-abc", rec["id"])
+	assert.Equal(t, "env-xyz", rec["environmentId"])
 	assert.Equal(t, "Thailand", rec["country"])
+}
+
+func TestUsageEventWithFeatureCollectUsageRecordOmitsEmptyEnvironmentID(t *testing.T) {
+	fv := &FeatureHubUsageValue{ID: "id-abc", Key: "my-flag", Value: "on"}
+	e := NewUsageEventWithFeature(fv, nil, "")
+
+	rec := e.CollectUsageRecord()
+	_, hasEnvID := rec["environmentId"]
+	assert.False(t, hasEnvID, "environmentId should be absent when empty")
 }
 
 func TestUsageEventWithFeatureCollectUsageRecordNilContext(t *testing.T) {
@@ -217,14 +229,16 @@ func TestUsageNamedFeaturesCollectionCollectUsageRecord(t *testing.T) {
 // --- Provider ---
 
 func TestProviderNewUsageValue(t *testing.T) {
-	v := DefaultProvider.NewUsageValue("id", "key", float64(7), models.TypeNumber)
+	v := DefaultProvider.NewUsageValue("id", "key", "env-1", float64(7), models.TypeNumber)
 	assert.Equal(t, "7", v.Value)
+	assert.Equal(t, "env-1", v.EnvironmentID)
 }
 
 func TestProviderNewUsageValueFromFeature(t *testing.T) {
-	fs := &models.FeatureState{ID: "fid", Key: "fkey", Value: false, Type: models.TypeBoolean}
+	fs := &models.FeatureState{ID: "fid", Key: "fkey", EnvironmentID: "env-2", Value: false, Type: models.TypeBoolean}
 	v := DefaultProvider.NewUsageValueFromFeature(fs)
 	assert.Equal(t, "off", v.Value)
+	assert.Equal(t, "env-2", v.EnvironmentID)
 }
 
 func TestProviderNewUsageFeature(t *testing.T) {

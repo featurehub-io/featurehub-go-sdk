@@ -17,7 +17,7 @@ Todo
 - [ ] Strategies should support arrays in the Context like the other SDKs
 - [X] Feature updates should deal with key changes, ID is the unique identifier internally
 - [X] Usage
-- [ ] Usage should include the environment id
+- [X] Usage should include the environment id
 - [ ] Usage otel
 - [ ] Usage segment
 - [X] Check the percentage calc is the same in golang as everywhere else

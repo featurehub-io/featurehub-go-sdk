@@ -60,25 +60,27 @@ func convert(value interface{}, valueType models.FeatureValueType) string {
 	return activeConvert(value, valueType)
 }
 
-// FeatureHubUsageValue holds a single feature's ID, key and converted value.
+// FeatureHubUsageValue holds a single feature's ID, key, environment ID, and converted value.
 type FeatureHubUsageValue struct {
-	ID    string
-	Key   string
-	Value string
+	ID            string
+	Key           string
+	EnvironmentID string
+	Value         string
 }
 
 // NewUsageValue constructs a FeatureHubUsageValue, converting the raw value via the active ConvertFunc.
-func NewUsageValue(id, key string, value interface{}, valueType models.FeatureValueType) *FeatureHubUsageValue {
+func NewUsageValue(id, key, environmentID string, value interface{}, valueType models.FeatureValueType) *FeatureHubUsageValue {
 	return &FeatureHubUsageValue{
-		ID:    id,
-		Key:   key,
-		Value: convert(value, valueType),
+		ID:            id,
+		Key:           key,
+		EnvironmentID: environmentID,
+		Value:         convert(value, valueType),
 	}
 }
 
 // NewUsageValueFromFeature constructs a FeatureHubUsageValue from a FeatureState.
 func NewUsageValueFromFeature(feature *models.FeatureState) *FeatureHubUsageValue {
-	return NewUsageValue(feature.ID, feature.Key, feature.Value, feature.Type)
+	return NewUsageValue(feature.ID, feature.Key, feature.EnvironmentID, feature.Value, feature.Type)
 }
 
 // UsageEvent is implemented by all usage event types.
@@ -177,6 +179,9 @@ func (e *BaseWithFeature) CollectUsageRecord() ContextRecord {
 	result["feature"] = e.feature.Key
 	result["value"] = e.feature.Value
 	result["id"] = e.feature.ID
+	if e.feature.EnvironmentID != "" {
+		result["environmentId"] = e.feature.EnvironmentID
+	}
 	return result
 }
 
@@ -277,7 +282,7 @@ type Plugin interface {
 type Provider struct{}
 
 type ProviderFactory interface {
-	NewUsageValue(id, key string, value interface{}, valueType models.FeatureValueType) *FeatureHubUsageValue
+	NewUsageValue(id, key, environmentID string, value interface{}, valueType models.FeatureValueType) *FeatureHubUsageValue
 	NewUsageValueFromFeature(feature *models.FeatureState) *FeatureHubUsageValue
 	NewUsageFeature(feature *FeatureHubUsageValue, contextAttributes ContextRecord, userKey string) *BaseWithFeature
 	NewUsageCollectionEvent() *BaseFeaturesCollection
@@ -289,8 +294,8 @@ type ProviderFactory interface {
 var DefaultProvider = &Provider{}
 
 // NewUsageValue creates a FeatureHubUsageValue from raw fields.
-func (*Provider) NewUsageValue(id, key string, value interface{}, valueType models.FeatureValueType) *FeatureHubUsageValue {
-	return NewUsageValue(id, key, value, valueType)
+func (*Provider) NewUsageValue(id, key, environmentID string, value interface{}, valueType models.FeatureValueType) *FeatureHubUsageValue {
+	return NewUsageValue(id, key, environmentID, value, valueType)
 }
 
 // NewUsageValueFromFeature creates a FeatureHubUsageValue from a FeatureState.

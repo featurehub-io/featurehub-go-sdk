@@ -478,10 +478,10 @@ func (r *ClientFeatureHubRepository) GetFeatures() []*models.FeatureIdentity {
 
 	defer r.featuresMutex.Unlock()
 
-	features := make([]*models.FeatureIdentity, len(r.features))
+	features := make([]*models.FeatureIdentity, 0, len(r.features))
 
 	for _, f := range r.features {
-		features = append(features, &models.FeatureIdentity{ID: f.ID, Key: f.Key, ValueType: f.Type})
+		features = append(features, &models.FeatureIdentity{ID: f.ID, Key: f.Key, ValueType: f.Type, EnvironmentID: f.EnvironmentID})
 	}
 
 	return features

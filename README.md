@@ -206,6 +206,7 @@ Every call to `GetBoolean`, `GetNumber`, `GetString`, or `GetRawJSON` on a `Clie
 - The feature key and its evaluated value (after strategy evaluation)
 - The user key (from `Context.Userkey` or `Context.Session`)
 - The full context attributes (device, platform, country, version, custom fields)
+- The environment-id of the environment the feature is from
 
 Usage is **not** emitted when:
 - The feature key is not found

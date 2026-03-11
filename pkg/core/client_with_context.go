@@ -60,7 +60,7 @@ func (cc *ClientWithContext) GetBoolean(key string) (bool, error) {
 	}
 	if matched {
 		if fs != nil {
-			cc.used(key, fs.ID, value, fs.Type)
+			cc.used(key, fs, value)
 		}
 		return value, nil
 	}
@@ -74,13 +74,13 @@ func (cc *ClientWithContext) GetBoolean(key string) (bool, error) {
 
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(bool); ok {
-				cc.used(key, fs.ID, strategyValue, fs.Type)
+				cc.used(key, fs, strategyValue)
 
 				return strategyValue, nil
 			}
 		}
 
-		cc.used(key, fs.ID, value, fs.Type)
+		cc.used(key, fs, value)
 	}
 
 	// Return the default value as a fall-back:
@@ -96,7 +96,7 @@ func (cc *ClientWithContext) GetNumber(key string) (*float64, error) {
 	}
 	if matched {
 		if fs != nil {
-			cc.used(key, fs.ID, value, fs.Type)
+			cc.used(key, fs, value)
 		}
 		return value, nil
 	}
@@ -110,13 +110,13 @@ func (cc *ClientWithContext) GetNumber(key string) (*float64, error) {
 
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(float64); ok {
-				cc.used(key, fs.ID, strategyValue, fs.Type)
+				cc.used(key, fs, strategyValue)
 
 				return &strategyValue, nil
 			}
 		}
 
-		cc.used(key, fs.ID, value, fs.Type)
+		cc.used(key, fs, value)
 	}
 
 	// Return the default value as a fall-back:
@@ -131,7 +131,7 @@ func (cc *ClientWithContext) getContextString(key string, valueType models.Featu
 	}
 	if matched {
 		if fs != nil {
-			cc.used(key, fs.ID, value, fs.Type)
+			cc.used(key, fs, value)
 		}
 		return value, nil
 	}
@@ -145,13 +145,13 @@ func (cc *ClientWithContext) getContextString(key string, valueType models.Featu
 
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(string); ok {
-				cc.used(key, fs.ID, strategyValue, fs.Type)
+				cc.used(key, fs, strategyValue)
 
 				return &strategyValue, nil
 			}
 		}
 
-		cc.used(key, fs.ID, value, fs.Type)
+		cc.used(key, fs, value)
 	}
 
 	// Return the default value as a fall-back:
@@ -235,12 +235,12 @@ func (cc *ClientWithContext) DeleteNotifier(featureKey, notifierUUID string) err
 	return cc.repository.DeleteNotifier(featureKey, notifierUUID)
 }
 
-func (cc *ClientWithContext) used(key string, id string, value interface{}, valueType models.FeatureValueType) {
+func (cc *ClientWithContext) used(key string, fs *models.FeatureState, value interface{}) {
 	userKey, _ := cc.UniqueKey()
 
 	cc.RecordUsageEvent(
 		cc.featureRepository.UsageProvider().NewUsageFeature(
-			usage.NewUsageValue(id, key, value, valueType),
+			usage.NewUsageValue(fs.ID, key, fs.EnvironmentID, value, fs.Type),
 			cc.fullContext(),
 			userKey))
 }
@@ -316,7 +316,7 @@ func (cc *ClientWithContext) mapRepositoryFeaturesToUsageValues() []*usage.Featu
 		}
 
 		if ok == nil && found {
-			usageValues = append(usageValues, usage.NewUsageValue(feat.ID, feat.Key, value, feat.ValueType))
+			usageValues = append(usageValues, usage.NewUsageValue(feat.ID, feat.Key, feat.EnvironmentID, value, feat.ValueType))
 		}
 	}
 
