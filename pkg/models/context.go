@@ -3,6 +3,7 @@ package models
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -75,6 +76,45 @@ func (c *Context) ForPercentage(key string) string {
 	logger.Tracef("context percent: for key `%s` the value is `%s`", key, retVal)
 
 	return retVal
+}
+
+func (c *Context) GenerateHeader() string {
+	parts := make([]string, 0)
+
+	if c.Userkey != "" {
+		parts = append(parts, fmt.Sprintf("userkey=%s", url.QueryEscape(c.Userkey)))
+	}
+	if c.Session != "" {
+		parts = append(parts, fmt.Sprintf("session=%s", url.QueryEscape(c.Session)))
+	}
+	if c.Device != "" {
+		parts = append(parts, fmt.Sprintf("device=%s", url.QueryEscape(string(c.Device))))
+	}
+	if c.Platform != "" {
+		parts = append(parts, fmt.Sprintf("platform=%s", url.QueryEscape(string(c.Platform))))
+	}
+	if c.Country != "" {
+		parts = append(parts, fmt.Sprintf("country=%s", url.QueryEscape(string(c.Country))))
+	}
+	if c.Version != "" {
+		parts = append(parts, fmt.Sprintf("version=%s", url.QueryEscape(c.Version)))
+	}
+	if c.Custom != nil {
+		for k, v := range c.Custom {
+			parts = append(parts, fmt.Sprintf("%s=%s", k, url.QueryEscape(fmt.Sprintf("%v", v))))
+		}
+	}
+	slices.Sort(parts)
+	var header = ""
+
+	for _, part := range parts {
+		if header != "" {
+			header += "&"
+		}
+		header += part
+	}
+
+	return header
 }
 
 // ContextDevice is the client's device type:

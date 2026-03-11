@@ -28,6 +28,7 @@ type Config struct {
 	LogLevel          logrus.Level // Logging level (default is "info")
 	Logger            *logrus.Logger
 	SDKKey            string                      // SDK key (copied from the UI), in the format "{namedCache}/environmentID/APIKey"
+	additionalSDKKeys []string                    // extra SDK keys appended to polling requests
 	ServerAddress     string                      // FeatureHub API endpoint
 	WaitForData       *time.Duration              // if set, how long a repository will wait before aborting connection attempt
 	repository        *ClientFeatureHubRepository // A FeatureHub repository implementation
@@ -79,6 +80,22 @@ func (p *passiveRestPollPlugin) DefaultPluginAttributes() usage.ContextRecord { 
 func (p *passiveRestPollPlugin) Send(_ usage.UsageEvent) {
 	if p.config.client != nil && p.config.requestedEdgeType == EdgePassiveRest {
 		p.config.client.Poll() //nolint:errcheck
+	}
+}
+
+// Build - this is only relevant for Server Evaluated functionality. It pairs a single context with a single edge connection.
+// you can have multiple connections ONLY if you have multiple instances of Config. All state is being evaluated on the server,
+// no strategies are being sent back to the client.
+func (c *Config) Build(context *models.Context) (*Config, error) {
+	if c.ClientEvaluated() {
+		return c, nil
+	}
+
+	if c.client == nil {
+		return c.connect(new(context.GenerateHeader()))
+	} else {
+		c.client.ContextChange(context.GenerateHeader())
+		return c, nil
 	}
 }
 
@@ -137,8 +154,7 @@ func (c *Config) ReadinessListener(callbackFunc func()) {
 	c.checkRepository().ReadinessListener(callbackFunc)
 }
 
-// Connect prepares a repository and connects to the configured FH server:
-func (c *Config) Connect() (*Config, error) {
+func (c *Config) connect(header *string) (*Config, error) {
 	provider, err := c.EdgeProvider(c, c.checkRepository())
 
 	if err != nil {
@@ -147,9 +163,18 @@ func (c *Config) Connect() (*Config, error) {
 
 	c.client = provider
 
+	if header != nil {
+		c.client.ContextChange(*header)
+	}
+
 	c.client.Connect()
 
 	return c, nil
+}
+
+// Connect prepares a repository and connects to the configured FH server:
+func (c *Config) Connect() (*Config, error) {
+	return c.connect(nil)
 }
 
 // NewContext returns a ClientWithContext, with default context values:
@@ -265,9 +290,21 @@ func (c *Config) FeaturesURL() string {
 	return fmt.Sprintf("%s/features/%s", c.ServerAddress, c.SDKKey)
 }
 
-// PollingFeaturesURL returns the URL for the REST polling endpoint:
+// WithSDKKey adds an additional SDK key to the config. Additional keys are appended
+// as extra apiKey= query parameters in polling requests, enabling multi-environment polling.
+func (c *Config) WithSDKKey(key string) *Config {
+	c.additionalSDKKeys = append(c.additionalSDKKeys, key)
+	return c
+}
+
+// PollingFeaturesURL returns the URL for the REST polling endpoint.
+// All SDK keys (primary and additional) are included as separate apiKey= parameters.
 func (c *Config) PollingFeaturesURL() string {
-	return fmt.Sprintf("%s/features?apiKey=%s", c.ServerAddress, c.SDKKey)
+	url := fmt.Sprintf("%s/features?apiKey=%s", c.ServerAddress, c.SDKKey)
+	for _, key := range c.additionalSDKKeys {
+		url += "&apiKey=" + key
+	}
+	return url
 }
 
 // Timeout returns the polling interval configured via ActiveRest or PassiveRest:

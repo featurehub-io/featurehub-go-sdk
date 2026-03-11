@@ -129,15 +129,31 @@ func TestRegisterMultipleUsagePluginsAllReceiveEvents(t *testing.T) {
 	assert.Equal(t, "user-2", p2.waitForEvent(t, time.Second).UserKey())
 }
 
-// mockEdgeClient records Poll calls.
+// mockEdgeClient records Poll and ContextChange calls.
 type mockEdgeClient struct {
-	pollCalls int
+	pollCalls         int
+	connectCalls      int
+	contextChangeArgs []string
 }
 
-func (m *mockEdgeClient) Connect()               {}
-func (m *mockEdgeClient) Poll() error            { m.pollCalls++; return nil }
-func (m *mockEdgeClient) ContextChange(_ string) {}
-func (m *mockEdgeClient) Close()                 {}
+func (m *mockEdgeClient) Connect()    { m.connectCalls++ }
+func (m *mockEdgeClient) Poll() error { m.pollCalls++; return nil }
+func (m *mockEdgeClient) ContextChange(h string) {
+	m.contextChangeArgs = append(m.contextChangeArgs, h)
+}
+func (m *mockEdgeClient) Close() {}
+
+func newMockEdgeProvider(client *mockEdgeClient) EdgeProviderFunc {
+	return func(_ *Config, _ interfaces.InternalRepository) (interfaces.EdgeClient, error) {
+		return client, nil
+	}
+}
+
+func newErrorEdgeProvider(err error) EdgeProviderFunc {
+	return func(_ *Config, _ interfaces.InternalRepository) (interfaces.EdgeClient, error) {
+		return nil, err
+	}
+}
 
 func TestPassiveRestPluginCallsPollOnUsageEvent(t *testing.T) {
 	config := NewConfig("http://localhost", "default/env/key", nil)
@@ -191,6 +207,118 @@ func TestPassiveRestPluginDoesNotPollForStreaming(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 	assert.Equal(t, 0, mockClient.pollCalls)
+}
+
+// --- Build ---
+
+func TestBuildClientEvaluatedReturnsWithoutConnecting(t *testing.T) {
+	mockClient := &mockEdgeClient{}
+	config := NewConfig("http://fh.example.com", "default/env/key*", newMockEdgeProvider(mockClient))
+
+	ctx := &models.Context{Userkey: "alice"}
+	result, err := config.Build(ctx)
+
+	require.NoError(t, err)
+	assert.Same(t, config, result)
+	assert.Nil(t, config.client, "client should not be created for client-evaluated keys")
+	assert.Empty(t, mockClient.contextChangeArgs)
+}
+
+func TestBuildServerEvaluatedNoClientConnectsAndSendsHeader(t *testing.T) {
+	mockClient := &mockEdgeClient{}
+	config := NewConfig("http://fh.example.com", "default/env/key", newMockEdgeProvider(mockClient))
+
+	ctx := &models.Context{Userkey: "bob", Country: models.ContextCountryAustralia}
+	result, err := config.Build(ctx)
+
+	require.NoError(t, err)
+	assert.Same(t, config, result)
+	assert.Equal(t, 1, mockClient.connectCalls)
+	require.Len(t, mockClient.contextChangeArgs, 1)
+	assert.Equal(t, ctx.GenerateHeader(), mockClient.contextChangeArgs[0])
+}
+
+func TestBuildServerEvaluatedExistingClientCallsContextChange(t *testing.T) {
+	mockClient := &mockEdgeClient{}
+	config := NewConfig("http://fh.example.com", "default/env/key", newMockEdgeProvider(mockClient))
+	config.client = mockClient // already connected
+
+	ctx := &models.Context{Userkey: "carol", Device: models.ContextDeviceDesktop}
+	result, err := config.Build(ctx)
+
+	require.NoError(t, err)
+	assert.Same(t, config, result)
+	assert.Equal(t, 0, mockClient.connectCalls, "Connect should not be called again when client already exists")
+	require.Len(t, mockClient.contextChangeArgs, 1)
+	assert.Equal(t, ctx.GenerateHeader(), mockClient.contextChangeArgs[0])
+}
+
+func TestBuildServerEvaluatedConnectErrorPropagates(t *testing.T) {
+	providerErr := errors.NewErrBadConfig("edge provider failed")
+	config := NewConfig("http://fh.example.com", "default/env/key", newErrorEdgeProvider(providerErr))
+
+	ctx := &models.Context{Userkey: "dave"}
+	_, err := config.Build(ctx)
+
+	assert.Error(t, err)
+	assert.Nil(t, config.client)
+}
+
+func TestBuildHeaderMatchesGenerateHeader(t *testing.T) {
+	mockClient := &mockEdgeClient{}
+	config := NewConfig("http://fh.example.com", "default/env/key", newMockEdgeProvider(mockClient))
+
+	ctx := &models.Context{
+		Userkey:  "eve",
+		Session:  "s42",
+		Device:   models.ContextDeviceMobile,
+		Platform: models.ContextPlatformIos,
+		Country:  models.ContextCountryThailand,
+		Version:  "3.0.0",
+		Custom:   map[string]interface{}{"plan": "enterprise"},
+	}
+	_, err := config.Build(ctx)
+
+	require.NoError(t, err)
+	require.Len(t, mockClient.contextChangeArgs, 1)
+	assert.Equal(t, ctx.GenerateHeader(), mockClient.contextChangeArgs[0])
+}
+
+func TestBuildCalledTwiceWithExistingClientSendsEachHeader(t *testing.T) {
+	mockClient := &mockEdgeClient{}
+	config := NewConfig("http://fh.example.com", "default/env/key", newMockEdgeProvider(mockClient))
+	config.client = mockClient
+
+	ctx1 := &models.Context{Userkey: "frank"}
+	ctx2 := &models.Context{Userkey: "grace"}
+	_, err := config.Build(ctx1)
+	require.NoError(t, err)
+	_, err = config.Build(ctx2)
+	require.NoError(t, err)
+
+	require.Len(t, mockClient.contextChangeArgs, 2)
+	assert.Equal(t, ctx1.GenerateHeader(), mockClient.contextChangeArgs[0])
+	assert.Equal(t, ctx2.GenerateHeader(), mockClient.contextChangeArgs[1])
+}
+
+func TestPollingFeaturesURLSingleKey(t *testing.T) {
+	config := &Config{ServerAddress: "http://fh.example.com", SDKKey: "default/env-1/key-1"}
+	assert.Equal(t, "http://fh.example.com/features?apiKey=default/env-1/key-1", config.PollingFeaturesURL())
+}
+
+func TestPollingFeaturesURLWithAdditionalKeys(t *testing.T) {
+	config := &Config{ServerAddress: "http://fh.example.com", SDKKey: "default/env-1/key-1"}
+	config.WithSDKKey("default/env-2/key-2").WithSDKKey("default/env-3/key-3")
+	assert.Equal(t,
+		"http://fh.example.com/features?apiKey=default/env-1/key-1&apiKey=default/env-2/key-2&apiKey=default/env-3/key-3",
+		config.PollingFeaturesURL())
+}
+
+func TestWithSDKKeyIsFluentAndAccumulates(t *testing.T) {
+	config := &Config{SDKKey: "primary/env/key"}
+	result := config.WithSDKKey("extra-1").WithSDKKey("extra-2")
+	assert.Same(t, config, result)
+	assert.Equal(t, []string{"extra-1", "extra-2"}, config.additionalSDKKeys)
 }
 
 func TestConfigValidation(t *testing.T) {

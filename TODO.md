@@ -12,10 +12,11 @@ Todo
 - [X] Dockerfile for building and running the todo-server
 - { ] e2e tests using the javascript client image once Alex figures it out
 - [X] Feature Properties
-- [ ] Polling should be able to handle multi SDK Keys
+- [X] Polling should be able to handle multi SDK Keys
 - [ ] Can SSE server side eval be supported?
 - [X] Strategies should support arrays in the Context like the other SDKs
 - [X] Feature updates should deal with key changes, ID is the unique identifier internally
+- [X] Context changes are not tracked therefore server side evaluation is not properly supported
 - [X] Usage
 - [X] Usage should include the environment id
 - [ ] Usage otel
@@ -53,3 +54,6 @@ If matched then attributes are compared if any.
 	- If all attributes match then we return the value from this strategy
 	- Otherwise continue with the next strategy
 - If no strategies match then return the default value for the feature
+
+GenerateHeader in Context should take all the attributes of the struct except Custom and add them to an array where 
+they have values and set them to lower case key
