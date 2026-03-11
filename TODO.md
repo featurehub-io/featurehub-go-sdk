@@ -14,7 +14,7 @@ Todo
 - [X] Feature Properties
 - [ ] Polling should be able to handle multi SDK Keys
 - [ ] Can SSE server side eval be supported?
-- [ ] Strategies should support arrays in the Context like the other SDKs
+- [X] Strategies should support arrays in the Context like the other SDKs
 - [X] Feature updates should deal with key changes, ID is the unique identifier internally
 - [X] Usage
 - [X] Usage should include the environment id
@@ -53,5 +53,3 @@ If matched then attributes are compared if any.
 	- If all attributes match then we return the value from this strategy
 	- Otherwise continue with the next strategy
 - If no strategies match then return the default value for the feature
-
-in SetRepository on Config, when a usage adapter is created, register a new plugin which has access to the current Config and when it receives an event, it checks if the Config's client has been created and if EdgeType() is PassiveRest and if so, calls Poll() on the client 

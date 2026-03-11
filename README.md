@@ -137,6 +137,96 @@ Features can carry an optional set of key/value string properties configured in 
 `Properties` is available on both `ClientWithContext` and directly on the repository.
 
 
+### Feature Value Interceptors
+
+A `FeatureValueInterceptor` lets you override the value returned for a feature key without modifying the server-side configuration. This is useful for local development overrides, test environments, or feature flag mocking.
+
+An interceptor is a function with the signature:
+
+```go
+type FeatureValueInterceptor func(key string, feature *models.FeatureState) (matched bool, value interface{})
+```
+
+Return `(true, value)` to supply an override, or `(false, nil)` to pass through to the normal evaluation. Interceptors are checked first, before rollout strategies are applied.
+
+Register an interceptor on the config before calling `Connect()`:
+
+```go
+fhConfig := client.New(serverAddress, apiKey)
+fhConfig.AddValueInterceptor(func(key string, _ *models.FeatureState) (bool, interface{}) {
+    if key == "myFlag" {
+        return true, true // always return true for this flag
+    }
+    return false, nil
+})
+fhConfig.Connect()
+```
+
+Multiple interceptors can be registered; they are evaluated in registration order and the first match wins.
+
+#### Local YAML overrides
+
+The `pkg/interceptors` package provides `NewLocalYamlValueInterceptor`, which reads overrides from a YAML file at initialisation time. This is convenient for local development where you want to force specific feature values without touching the server.
+
+The file path is taken from the `FEATUREHUB_OVERRIDES` environment variable. If the variable is not set, it defaults to `featurehub-overrides.yaml` in the working directory.
+
+**YAML file format** — a list of entries, each with `key`, `type`, and `value`:
+
+```yaml
+- key: myBoolFlag
+  type: BOOLEAN
+  value: true
+- key: maxRetries
+  type: NUMBER
+  value: 5
+- key: welcomeMessage
+  type: STRING
+  value: "Hello, world!"
+- key: configJson
+  type: JSON
+  value: '{"timeout": 30}'
+```
+
+`type` must match the FeatureHub value type (`BOOLEAN`, `NUMBER`, `STRING`, or `JSON`). Values are converted to the correct Go type at startup; invalid entries are logged and skipped.
+
+**Registering the interceptor:**
+
+```go
+import (
+    "github.com/featurehub-io/featurehub-go-sdk/pkg/interceptors"
+)
+
+fhConfig := client.New(serverAddress, apiKey)
+fhConfig.AddValueInterceptor(interceptors.NewLocalYamlValueInterceptor(logger))
+fhConfig.Connect()
+```
+
+Or, pointing at a specific file:
+
+```go
+os.Setenv("FEATUREHUB_OVERRIDES", "/etc/myapp/feature-overrides.yaml")
+fhConfig.AddValueInterceptor(interceptors.NewLocalYamlValueInterceptor(logger))
+```
+
+#### Writing your own interceptor
+
+Any function matching the `FeatureValueInterceptor` signature can be used. The `feature` argument is the current `FeatureState` from the repository (may be `nil` if the key is unknown). The returned `value` must be of the correct Go type for the feature (`bool`, `float64`, or `string`).
+
+```go
+func myInterceptor(key string, fs *models.FeatureState) (bool, interface{}) {
+    overrides := map[string]interface{}{
+        "darkMode":    true,
+        "maxPageSize": float64(50),
+    }
+    if v, ok := overrides[key]; ok {
+        return true, v
+    }
+    return false, nil
+}
+
+fhConfig.AddValueInterceptor(myInterceptor)
+```
+
 ### Configuring Notifiers (callbacks)
 The client SDK allows the user to define callback notifications which will be triggered whenever a specific feature key is updated.
 Notifiers can be defined at any time, even before the client has received data.
