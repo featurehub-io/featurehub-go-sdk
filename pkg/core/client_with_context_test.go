@@ -162,7 +162,7 @@ var TestFeature1States = []*models.FeatureState{
 		},
 	},
 	{
-		ID:    "TestFeature2",
+		ID:    "p'Korn",
 		Key:   "TestFeature2",
 		Type:  models.TypeString,
 		Value: "this is the default value",
@@ -181,6 +181,7 @@ var TestFeature1States = []*models.FeatureState{
 			},
 		},
 	},
+
 	{
 		ID:    "TestFeature3",
 		Key:   "TestBoolean",
@@ -290,11 +291,11 @@ func TestClientWithContext(t *testing.T) {
 
 	// Look for a 33% rule (based on a pre-calculated hash):
 	assert.Equal(t, "this is for the 33 percent",
-		derefString(repository.WithContext(&models.Context{Userkey: "1111111111"}).GetString("TestFeature2")))
+		derefString(repository.WithContext(&models.Context{Userkey: "อ้วม"}).GetString("TestFeature2")))
 
 	// Look for a 66% rule (based on a pre-calculated hash):
 	assert.Equal(t, "this is for the 66 percent",
-		derefString(repository.WithContext(&models.Context{Userkey: "1111111111", Session: "4444444444"}).GetString("TestFeature2")))
+		derefString(repository.WithContext(&models.Context{Userkey: "1111111111", Session: "ศิริลักษณ์"}).GetString("TestFeature2")))
 
 	// Get a default boolean value:
 	booleanValue, err := repository.

@@ -3,9 +3,11 @@ package core
 import (
 	"maps"
 
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/usage"
+	"github.com/google/uuid"
 )
 
 // ClientWithContext bundles a Context with a repository:
@@ -65,7 +67,11 @@ func (cc *ClientWithContext) GetBoolean(key string) (bool, error) {
 
 	if fs != nil {
 		// Figure out which value to use:
-		if calculatedValue := fs.Strategies.Calculate(cc.Context); calculatedValue != nil {
+		if calculatedValue, ok := fs.Strategies.Calculate(cc.Context, fs.ID); ok {
+			if calculatedValue == nil {
+				return false, errors.NewErrInvalidType("strategy returned nil for bool value")
+			}
+
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(bool); ok {
 				cc.used(key, fs.ID, strategyValue, fs.Type)
@@ -97,7 +103,10 @@ func (cc *ClientWithContext) GetNumber(key string) (*float64, error) {
 
 	if fs != nil {
 		// Figure out which value to use:
-		if calculatedValue := fs.Strategies.Calculate(cc.Context); calculatedValue != nil {
+		if calculatedValue, ok := fs.Strategies.Calculate(cc.Context, fs.ID); ok {
+			if calculatedValue == nil {
+				return nil, nil
+			}
 
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(float64); ok {
@@ -129,7 +138,10 @@ func (cc *ClientWithContext) getContextString(key string, valueType models.Featu
 
 	if fs != nil {
 		// Figure out which value to use:
-		if calculatedValue := fs.Strategies.Calculate(cc.Context); calculatedValue != nil {
+		if calculatedValue, ok := fs.Strategies.Calculate(cc.Context, fs.ID); ok {
+			if calculatedValue == nil {
+				return nil, nil
+			}
 
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(string); ok {
@@ -158,6 +170,29 @@ func (cc *ClientWithContext) GetString(key string) (*string, error) {
 
 func (cc *ClientWithContext) Properties(featureKey string) map[string]string {
 	return cc.repository.Properties(featureKey)
+}
+
+func (cc *ClientWithContext) GetPercentageAttributes(percentageAttributes []string) string {
+	if percentageAttributes == nil || len(percentageAttributes) == 0 {
+		if key, ok := cc.UniqueKey(); !ok {
+			cc.Context.Session = uuid.New().String()
+			return cc.Context.Session
+		} else {
+			return key
+		}
+	}
+
+	var pa = ""
+
+	for _, key := range percentageAttributes {
+		if len(pa) > 0 {
+			pa += "$"
+		}
+
+		pa += cc.Context.ForPercentage(key)
+	}
+
+	return pa
 }
 
 // WithContext returns a new clientWithContext:
@@ -219,13 +254,13 @@ func (cc *ClientWithContext) used(key string, id string, value interface{}, valu
  * @param event - something that can have "toMap()" called on it
  */
 
-// recordUsageEvent(event: any | UsageEvent): any;
+// RecordUsageEvent (event: any | UsageEvent): any;
 func (cc *ClientWithContext) RecordUsageEvent(event usage.UsageEvent) {
 	cc.featureRepository.EmitUsageEvent(cc.fillEvent(event))
 }
 
 /**
- * This gives a full
+ * GetContextUsage This gives a full event stuffed with the context and all features
  */
 func (cc *ClientWithContext) GetContextUsage() usage.UsageEvent {
 	// user key will be filled in when fillEvent is called

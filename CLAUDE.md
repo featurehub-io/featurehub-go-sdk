@@ -122,9 +122,26 @@ Handled in `pkg/streaming-client/streaming_client_handlers.go`:
 
 `ClientFeatureHubRepository` uses two separate `sync.Mutex` instances: one for `features` and one for `notifiers`. Feature writes (SSE events) and reads (user code) are both mutex-guarded. Usage stream handlers are stored in a map guarded by a third mutex (`usageStreamsMu`); `EmitUsageEvent` iterates the map without locking (streams change rarely).
 
+### Feature Identity and Key Mutability
+
+Features are stored internally by **ID**, not by key. The `ID` field is the only immutable identifier; the user-visible `Key` can change between server updates. `ClientFeatureHubRepository` maintains two maps:
+
+- `features map[string]*models.FeatureState` — keyed by feature ID
+- `keyIndex map[string]string` — maps current key → ID
+
+All three write methods (`ProcessFeature`, `ProcessFeatures`, `ProcessDeleteFeature`) and all read methods (`GetFeature`, `Properties`) operate through this two-level index. When a key rename is detected during `ProcessFeature`, the stale key is removed from `keyIndex` atomically. `ProcessDeleteFeature` looks up by ID first; if the payload carries no ID it falls back to the key index.
+
+The `featureID(feature)` helper returns `feature.ID` when set, or `feature.Key` as a fallback for older server payloads that omit the ID.
+
+**Every `FeatureState` created in tests must include a non-empty `ID` field.** The ID is required; omitting it causes the feature to be indexed under its key, losing the key-mutability guarantee.
+
 ### SDK Key Format
 
-The SDKKey passed to `NewConfig()` must follow the format: `{namedCache}/environmentID/APIKey`. Keys containing `"*"` are client-evaluated (`Config.ClientEvaluated() == true`). Validated in `pkg/core/config.go`.
+The SDKKey passed to `NewConfig()` follows one of two formats:
+- `{namedCache}/environmentID/APIKey` (3-part)
+- `environmentID/APIKey` (2-part)
+
+Keys containing `"*"` are client-evaluated (`Config.ClientEvaluated() == true`). `Config.EnvironmentID()` extracts the environment ID regardless of which format is used. Validated in `pkg/core/config.go`.
 
 ### Notifier System
 

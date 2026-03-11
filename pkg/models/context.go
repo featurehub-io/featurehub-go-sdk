@@ -3,6 +3,7 @@ package models
 import (
 	"fmt"
 	"net/url"
+	"strings"
 )
 
 // Context defines metadata for the client:
@@ -35,6 +36,45 @@ func (c *Context) UniqueKey() (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func (c *Context) ForPercentage(key string) string {
+	var retVal = "<none>"
+	lc := strings.ToLower(key)
+	if lc == "userkey" {
+		if c.Userkey != "" {
+			retVal = c.Userkey
+		}
+	} else if lc == "session" {
+		if c.Session != "" {
+			retVal = c.Session
+		}
+	} else if lc == "device" {
+		if c.Device != "" {
+			retVal = string(c.Device)
+		}
+	} else if lc == "platform" {
+		if c.Platform != "" {
+			retVal = string(c.Platform)
+		}
+	} else if lc == "country" {
+		if c.Country != "" {
+			retVal = string(c.Country)
+		}
+	} else if lc == "version" {
+		if c.Version != "" {
+			retVal = string(c.Version)
+		}
+	} else {
+		if val, ok := c.Custom[key]; ok {
+			// we aren't sure whats in it, but it needs to be convertable to a string
+			retVal = fmt.Sprintf("%v", val)
+		}
+	}
+
+	logger.Tracef("context percent: for key `%s` the value is `%s`", key, retVal)
+
+	return retVal
 }
 
 // ContextDevice is the client's device type:
