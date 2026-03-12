@@ -32,6 +32,13 @@ func ConvertValue(typeName FeatureValueType, raw interface{}) (interface{}, erro
 		case bool:
 			return v, nil
 		case string:
+			// copy with reversing usage plugin values
+			if v == "on" || v == "yes" || v == "y" {
+				return true, nil
+			}
+			if v == "off" || v == "no" || v == "n" {
+				return false, nil
+			}
 			return strconv.ParseBool(v)
 		default:
 			return strconv.ParseBool(fmt.Sprintf("%v", raw))
