@@ -24,15 +24,15 @@ func seedRepo(repo *ClientFeatureHubRepository) {
 
 // interceptorThatMatches returns an interceptor that always matches with the given value.
 func interceptorThatMatches(value interface{}) interfaces.FeatureValueInterceptor {
-	return func(_ string, _ *models.FeatureState) (bool, interface{}) {
-		return true, value
+	return func(_ context.Context, _ string, _ *models.FeatureState) (interface{}, bool) {
+		return value, true
 	}
 }
 
 // interceptorThatMisses returns an interceptor that never matches.
 func interceptorThatMisses() interfaces.FeatureValueInterceptor {
-	return func(_ string, _ *models.FeatureState) (bool, interface{}) {
-		return false, nil
+	return func(_ context.Context, _ string, _ *models.FeatureState) (interface{}, bool) {
+		return nil, false
 	}
 }
 
@@ -56,7 +56,7 @@ func TestInterceptorOverridesFeatureValue(t *testing.T) {
 	seedRepo(repo)
 	repo.AddValueInterceptor(interceptorThatMatches(true))
 
-	_, matched, value, err := repo.GetFeature("flag")
+	_, matched, value, err := repo.GetFeature(context.TODO(), "flag")
 
 	require.NoError(t, err)
 	assert.True(t, matched, "matched should be true when interceptor fires")
@@ -68,7 +68,7 @@ func TestInterceptorNoMatchFallsThroughToFeatureValue(t *testing.T) {
 	seedRepo(repo)
 	repo.AddValueInterceptor(interceptorThatMisses())
 
-	_, matched, value, err := repo.GetFeature("flag")
+	_, matched, value, err := repo.GetFeature(context.TODO(), "flag")
 
 	require.NoError(t, err)
 	assert.False(t, matched, "matched should be false when no interceptor fires")
@@ -80,7 +80,7 @@ func TestInterceptorCalledWhenFeatureNotInRepository(t *testing.T) {
 	// No features loaded; interceptor provides value for unknown key.
 	repo.AddValueInterceptor(interceptorThatMatches("injected"))
 
-	_, matched, value, err := repo.GetFeature("unknown-key")
+	_, matched, value, err := repo.GetFeature(context.TODO(), "unknown-key")
 
 	require.NoError(t, err, "no error when interceptor matches an unknown feature")
 	assert.True(t, matched)
@@ -91,7 +91,7 @@ func TestNoInterceptorMatchOnUnknownFeatureReturnsNotFound(t *testing.T) {
 	repo := createRepository()
 	repo.AddValueInterceptor(interceptorThatMisses())
 
-	_, _, _, err := repo.GetFeature("unknown-key")
+	_, _, _, err := repo.GetFeature(context.TODO(), "unknown-key")
 
 	assert.Error(t, err, "should return ErrFeatureNotFound when interceptor misses and feature absent")
 }
@@ -103,13 +103,13 @@ func TestInterceptorReceivesCorrectKeyAndFeatureState(t *testing.T) {
 	var capturedKey string
 	var capturedFeature *models.FeatureState
 
-	repo.AddValueInterceptor(func(key string, feature *models.FeatureState) (bool, interface{}) {
+	repo.AddValueInterceptor(func(context context.Context, key string, feature *models.FeatureState) (interface{}, bool) {
 		capturedKey = key
 		capturedFeature = feature
-		return false, nil
+		return nil, false
 	})
 
-	repo.GetFeature("flag") //nolint:errcheck
+	repo.GetFeature(context.TODO(), "flag") //nolint:errcheck
 
 	assert.Equal(t, "flag", capturedKey)
 	require.NotNil(t, capturedFeature)
@@ -121,13 +121,13 @@ func TestInterceptorReceivesNilFeatureWhenKeyAbsent(t *testing.T) {
 
 	var capturedFeature *models.FeatureState
 	var captureTriggered bool = false
-	repo.AddValueInterceptor(func(_ string, feature *models.FeatureState) (bool, interface{}) {
+	repo.AddValueInterceptor(func(_ context.Context, _ string, feature *models.FeatureState) (interface{}, bool) {
 		capturedFeature = feature
 		captureTriggered = true
-		return false, nil
+		return nil, false
 	})
 
-	repo.GetFeature("absent") //nolint:errcheck
+	repo.GetFeature(context.TODO(), "absent") //nolint:errcheck
 
 	assert.True(t, captureTriggered)
 	assert.Nil(t, capturedFeature, "interceptor should receive nil for unknown features")
@@ -140,16 +140,16 @@ func TestMultipleInterceptorsFirstMatchWins(t *testing.T) {
 	seedRepo(repo)
 
 	callCount := 0
-	repo.AddValueInterceptor(func(_ string, _ *models.FeatureState) (bool, interface{}) {
+	repo.AddValueInterceptor(func(_ context.Context, _ string, _ *models.FeatureState) (interface{}, bool) {
 		callCount++
-		return true, "first"
+		return "first", true
 	})
-	repo.AddValueInterceptor(func(_ string, _ *models.FeatureState) (bool, interface{}) {
+	repo.AddValueInterceptor(func(_ context.Context, _ string, _ *models.FeatureState) (interface{}, bool) {
 		callCount++
-		return true, "second"
+		return "second", true
 	})
 
-	_, matched, value, err := repo.GetFeature("flag")
+	_, matched, value, err := repo.GetFeature(context.TODO(), "flag")
 
 	require.NoError(t, err)
 	assert.True(t, matched)
@@ -163,7 +163,7 @@ func TestMultipleInterceptorsAllMissFallsThrough(t *testing.T) {
 	repo.AddValueInterceptor(interceptorThatMisses())
 	repo.AddValueInterceptor(interceptorThatMisses())
 
-	_, matched, value, err := repo.GetFeature("label")
+	_, matched, value, err := repo.GetFeature(context.TODO(), "label")
 
 	require.NoError(t, err)
 	assert.False(t, matched)
@@ -223,7 +223,7 @@ func TestInterceptorMatchedPropagatedFromGetInternalBoolean(t *testing.T) {
 	seedRepo(repo)
 	repo.AddValueInterceptor(interceptorThatMatches(true))
 
-	_, matched, value, err := repo.GetInternalBoolean("flag")
+	_, matched, value, err := repo.GetInternalBoolean(context.TODO(), "flag")
 
 	require.NoError(t, err)
 	assert.True(t, matched)
@@ -235,7 +235,7 @@ func TestInterceptorMatchedPropagatedFromGetInternalNumber(t *testing.T) {
 	seedRepo(repo)
 	repo.AddValueInterceptor(interceptorThatMatches(float64(7)))
 
-	_, matched, value, err := repo.GetInternalNumber("count")
+	_, matched, value, err := repo.GetInternalNumber(context.TODO(), "count")
 
 	require.NoError(t, err)
 	assert.True(t, matched)
@@ -248,7 +248,7 @@ func TestInterceptorMatchedPropagatedFromGetInternalString(t *testing.T) {
 	seedRepo(repo)
 	repo.AddValueInterceptor(interceptorThatMatches("injected"))
 
-	_, matched, value, err := repo.GetInternalString("label", models.TypeString)
+	_, matched, value, err := repo.GetInternalString(context.TODO(), "label", models.TypeString)
 
 	require.NoError(t, err)
 	assert.True(t, matched)
@@ -263,11 +263,11 @@ func TestInterceptorCanTargetSpecificKey(t *testing.T) {
 	seedRepo(repo)
 
 	// Only override "flag", leave "label" alone.
-	repo.AddValueInterceptor(func(key string, _ *models.FeatureState) (bool, interface{}) {
+	repo.AddValueInterceptor(func(_ context.Context, key string, _ *models.FeatureState) (interface{}, bool) {
 		if key == "flag" {
 			return true, true
 		}
-		return false, nil
+		return nil, false
 	})
 
 	flagValue, err := repo.GetBoolean(context.TODO(), "flag")

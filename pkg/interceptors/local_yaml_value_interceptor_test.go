@@ -1,6 +1,7 @@
 package interceptors
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -42,7 +43,7 @@ func TestNoFileReturnsNonMatchingInterceptor(t *testing.T) {
 	t.Setenv(overridesEnvVar, filepath.Join(t.TempDir(), "does-not-exist.yaml"))
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("anyKey", nil)
+	value, matched := interceptor(context.TODO(), "anyKey", nil)
 
 	assert.False(t, matched)
 	assert.Nil(t, value)
@@ -55,7 +56,7 @@ func TestUnknownKeyReturnsNoMatch(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("unknown", nil)
+	value, matched := interceptor(context.TODO(), "unknown", nil)
 
 	assert.False(t, matched)
 	assert.Nil(t, value)
@@ -68,7 +69,7 @@ func TestBooleanNativeTrue(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("flag", nil)
+	value, matched := interceptor(context.TODO(), "flag", nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, true, value)
@@ -79,7 +80,7 @@ func TestBooleanNativeFalse(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("flag", nil)
+	value, matched := interceptor(context.TODO(), "flag", nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, false, value)
@@ -90,7 +91,7 @@ func TestBooleanStringTrue(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("flag", nil)
+	value, matched := interceptor(context.TODO(), "flag", nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, true, value)
@@ -101,7 +102,7 @@ func TestBooleanStringFalse(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("flag", nil)
+	value, matched := interceptor(context.TODO(), "flag", nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, false, value)
@@ -114,7 +115,7 @@ func TestNumberNativeFloat(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("count", nil)
+	value, matched := interceptor(context.TODO(), "count", nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, float64(3.14), value)
@@ -125,7 +126,7 @@ func TestNumberNativeInt(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("count", nil)
+	value, matched := interceptor(context.TODO(), "count", nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, float64(42), value)
@@ -136,7 +137,7 @@ func TestNumberStringValue(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("count", nil)
+	value, matched := interceptor(context.TODO(), "count", nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, float64(99.5), value)
@@ -149,7 +150,7 @@ func TestStringValue(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("label", nil)
+	value, matched := interceptor(context.TODO(), "label", nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, "hello world", value)
@@ -160,7 +161,7 @@ func TestStringEmptyValue(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("label", nil)
+	value, matched := interceptor(context.TODO(), "label", nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, "", value)
@@ -173,7 +174,7 @@ func TestJSONValue(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("cfg", nil)
+	value, matched := interceptor(context.TODO(), "cfg", nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, `{"enabled": true}`, value)
@@ -196,15 +197,15 @@ func TestMultipleEntriesAllResolved(t *testing.T) {
 	setOverridesFile(t, writeYAML(t, yaml))
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, val := interceptor("flagA", nil)
+	val, matched := interceptor(context.TODO(), "flagA", nil)
 	assert.True(t, matched)
 	assert.Equal(t, true, val)
 
-	matched, val = interceptor("flagB", nil)
+	val, matched = interceptor(context.TODO(), "flagB", nil)
 	assert.True(t, matched)
 	assert.Equal(t, float64(7), val)
 
-	matched, val = interceptor("flagC", nil)
+	val, matched = interceptor(context.TODO(), "flagC", nil)
 	assert.True(t, matched)
 	assert.Equal(t, "hi", val)
 }
@@ -217,7 +218,7 @@ func TestFeatureStateArgumentIsIgnored(t *testing.T) {
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
 	fs := &models.FeatureState{Key: "flag", Type: models.TypeBoolean, Value: false}
-	matched, value := interceptor("flag", fs)
+	value, matched := interceptor(context.TODO(), "flag", fs)
 
 	assert.True(t, matched)
 	assert.Equal(t, true, value, "interceptor value should win over the stored feature state")
@@ -237,10 +238,10 @@ func TestInvalidTypeSkipsEntryAndContinues(t *testing.T) {
 	setOverridesFile(t, writeYAML(t, yaml))
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, _ := interceptor("bad", nil)
+	_, matched := interceptor(context.TODO(), "bad", nil)
 	assert.False(t, matched, "entry with unknown type should be skipped")
 
-	matched, val := interceptor("good", nil)
+	val, matched := interceptor(context.TODO(), "good", nil)
 	assert.True(t, matched)
 	assert.Equal(t, true, val)
 }
@@ -250,7 +251,7 @@ func TestMalformedYAMLReturnsNonMatchingInterceptor(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, _ := interceptor("anyKey", nil)
+	_, matched := interceptor(context.TODO(), "anyKey", nil)
 	assert.False(t, matched)
 }
 
@@ -261,57 +262,8 @@ func TestEnvVarOverridesDefaultPath(t *testing.T) {
 	setOverridesFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	matched, value := interceptor("fromEnvVar", nil)
+	value, matched := interceptor(context.TODO(), "fromEnvVar", nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, "yes", value)
-}
-
-// --- convertValue unit tests ---
-
-func TestConvertValueBooleanTrue(t *testing.T) {
-	v, err := convertValue("BOOLEAN", true)
-	require.NoError(t, err)
-	assert.Equal(t, true, v)
-}
-
-func TestConvertValueBooleanStringFalse(t *testing.T) {
-	v, err := convertValue("BOOLEAN", "false")
-	require.NoError(t, err)
-	assert.Equal(t, false, v)
-}
-
-func TestConvertValueNumberInt(t *testing.T) {
-	v, err := convertValue("NUMBER", 5)
-	require.NoError(t, err)
-	assert.Equal(t, float64(5), v)
-}
-
-func TestConvertValueNumberFloat(t *testing.T) {
-	v, err := convertValue("NUMBER", float64(1.5))
-	require.NoError(t, err)
-	assert.Equal(t, float64(1.5), v)
-}
-
-func TestConvertValueNumberString(t *testing.T) {
-	v, err := convertValue("NUMBER", "2.5")
-	require.NoError(t, err)
-	assert.Equal(t, float64(2.5), v)
-}
-
-func TestConvertValueStringPassthrough(t *testing.T) {
-	v, err := convertValue("STRING", "hello")
-	require.NoError(t, err)
-	assert.Equal(t, "hello", v)
-}
-
-func TestConvertValueJSONPassthrough(t *testing.T) {
-	v, err := convertValue("JSON", `{"x":1}`)
-	require.NoError(t, err)
-	assert.Equal(t, `{"x":1}`, v)
-}
-
-func TestConvertValueUnknownTypeReturnsError(t *testing.T) {
-	_, err := convertValue("NONSENSE", "value")
-	assert.Error(t, err)
 }

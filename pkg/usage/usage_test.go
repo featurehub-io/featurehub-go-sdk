@@ -301,8 +301,11 @@ func newMockPlugin() *mockPlugin {
 	return &mockPlugin{ch: make(chan UsageEvent, 8)}
 }
 
-func (p *mockPlugin) DefaultPluginAttributes() ContextRecord   { return nil }
-func (p *mockPlugin) Send(_ context.Context, event UsageEvent) { p.ch <- event }
+func (p *mockPlugin) DefaultPluginAttributes() ContextRecord { return nil }
+func (p *mockPlugin) Send(ctx context.Context, event UsageEvent) context.Context {
+	p.ch <- event
+	return ctx
+}
 
 // wait blocks until n events arrive or the timeout elapses.
 func (p *mockPlugin) wait(t *testing.T, n int, timeout time.Duration) []UsageEvent {
@@ -391,5 +394,5 @@ func TestAdapterCloseRemovesHandler(t *testing.T) {
 // panickyPlugin panics on Send.
 type panickyPlugin struct{}
 
-func (*panickyPlugin) DefaultPluginAttributes() ContextRecord { return nil }
-func (*panickyPlugin) Send(_ context.Context, _ UsageEvent)   { panic("plugin error") }
+func (*panickyPlugin) DefaultPluginAttributes() ContextRecord                 { return nil }
+func (*panickyPlugin) Send(ctx context.Context, _ UsageEvent) context.Context { panic("plugin error") }

@@ -162,7 +162,7 @@ func TestFeatureNotifierWhenKeyChanges(t *testing.T) {
 	repository.AddNotifierString(context.TODO(), "stringfeature", callbackString)
 
 	repository.ProcessFeature(ffs(`{"id":"id-stringfeature","key":"stringfeature","type":"STRING","value":"this is a string","version":1}`))
-	fs, _, _, err := repository.GetFeature("stringfeature")
+	fs, _, _, err := repository.GetFeature(context.TODO(), "stringfeature")
 	assert.NoError(t, err)
 	assert.NotNil(t, fs)
 
@@ -172,7 +172,7 @@ func TestFeatureNotifierWhenKeyChanges(t *testing.T) {
 	repository.ProcessFeature(ffs(`{"id":"id-stringfeature","key":"ออม","type":"STRING","value":"this is also","version":2}`))
 	time.Sleep(250 * time.Millisecond)
 	assert.Equal(t, "this is also", callbackStringValue)
-	fs, _, _, err = repository.GetFeature("ออม")
+	fs, _, _, err = repository.GetFeature(context.TODO(), "ออม")
 	assert.NoError(t, err)
 	assert.NotNil(t, fs)
 	assert.Equal(t, "ออม", fs.Key)

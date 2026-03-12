@@ -2,6 +2,7 @@ package streamingclient
 
 import (
 	"bytes"
+	"context"
 	"testing"
 	"time"
 
@@ -73,13 +74,13 @@ func TestStreamingClientHandlers(t *testing.T) {
 	client.Connect()
 
 	// Make sure new features with old versions don't clobber values:
-	anotherFeature, _, _, err := repository.GetFeature("anotherfeature")
+	anotherFeature, _, _, err := repository.GetFeature(context.TODO(), "anotherfeature")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(3), anotherFeature.Version)
 	assert.Equal(t, "environment-id", anotherFeature.EnvironmentID)
 
 	// Make sure features get deleted:
-	deletedFeature, _, _, err := repository.GetFeature("featuretodelete")
+	deletedFeature, _, _, err := repository.GetFeature(context.TODO(), "featuretodelete")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrFeatureNotFound{}, err)
 	assert.Nil(t, deletedFeature)

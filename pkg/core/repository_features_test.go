@@ -51,12 +51,12 @@ func TestRepositoryFeatures(t *testing.T) {
 	repo.ProcessFeatures(features)
 
 	// Look for a feature that doesn't exist:
-	_, _, _, err = repo.GetFeature("something-that-does-not-exist")
+	_, _, _, err = repo.GetFeature(context.TODO(), "something-that-does-not-exist")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrFeatureNotFound{}, err)
 
 	// Look for a feature that DOES exist:
-	feature, matched, value, err := repo.GetFeature("stringfeature")
+	feature, matched, value, err := repo.GetFeature(context.TODO(), "stringfeature")
 	assert.NoError(t, err)
 	assert.Equal(t, models.FeatureValueType("STRING"), feature.Type)
 	assert.Equal(t, false, matched)
@@ -170,7 +170,7 @@ func TestWhenKeyChangesCorrectPropertyIsStillUpdated(t *testing.T) {
 	}
 	repo.ProcessFeature(feature)
 	// we can find the feature by key
-	f, _, _, fErr := repo.GetFeature("myfeature")
+	f, _, _, fErr := repo.GetFeature(context.TODO(), "myfeature")
 	assert.NoError(t, fErr)
 	assert.NotNil(t, f)
 	assert.Equal(t, feature.ID, f.ID)
@@ -184,10 +184,10 @@ func TestWhenKeyChangesCorrectPropertyIsStillUpdated(t *testing.T) {
 	}
 
 	repo.ProcessFeature(featureChangedKey)
-	f, _, _, fErr = repo.GetFeature("myfeature")
+	f, _, _, fErr = repo.GetFeature(context.TODO(), "myfeature")
 	assert.Error(t, fErr)
 	assert.Nil(t, f)
-	f, _, _, fErr = repo.GetFeature("หลิงหลิง")
+	f, _, _, fErr = repo.GetFeature(context.TODO(), "หลิงหลิง")
 	assert.NoError(t, fErr)
 	assert.NotNil(t, f)
 	assert.Equal(t, feature.ID, f.ID)
@@ -203,7 +203,7 @@ func TestWhenKeyChangesCorrectPropertyIsStillUpdated(t *testing.T) {
 
 	repo.ProcessFeature(featureChanged2Key)
 	// should fail to find as it has a lower version no
-	f, _, _, fErr = repo.GetFeature("鄺玲玲")
+	f, _, _, fErr = repo.GetFeature(context.TODO(), "鄺玲玲")
 	assert.Error(t, fErr)
 	assert.Nil(t, f)
 }
@@ -212,13 +212,13 @@ func TestFeatureDeletesWhenKeyHasChanged(t *testing.T) {
 	repo := createRepository()
 	repo.ProcessFeature(ffs(`{"id":"id-stringfeature","key":"หลิงหลิง","type":"STRING","value":"this is a string","version":1}`))
 
-	f, _, _, fErr := repo.GetFeature("หลิงหลิง")
+	f, _, _, fErr := repo.GetFeature(context.TODO(), "หลิงหลิง")
 	assert.NoError(t, fErr)
 	assert.NotNil(t, f)
 	repo.ProcessDeleteFeature(ffs(`{"id":"id-stringfeature","key":"鄺玲玲","type":"STRING","value":"this is a string","version":1}`))
-	f, _, _, fErr = repo.GetFeature("หลิงหลิง")
+	f, _, _, fErr = repo.GetFeature(context.TODO(), "หลิงหลิง")
 	assert.Nil(t, f)
 	assert.Error(t, fErr)
-	_, _, _, fErr = repo.GetFeature("鄺玲玲")
+	_, _, _, fErr = repo.GetFeature(context.TODO(), "鄺玲玲")
 	assert.Error(t, fErr)
 }

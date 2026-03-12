@@ -1,5 +1,10 @@
 package models
 
+import (
+	"fmt"
+	"strconv"
+)
+
 const (
 	// TypeBoolean is a basic boolean:
 	TypeBoolean FeatureValueType = "BOOLEAN"
@@ -16,3 +21,45 @@ const (
 
 // FeatureValueType defines model for FeatureValueType.
 type FeatureValueType string
+
+// ConvertValue converts a raw value (as decoded from YAML, JSON, or similar) to the Go type
+// expected for the given FeatureValueType. Scalars may arrive as bool, int, int64, float64, or
+// string; ConvertValue normalises them to bool, float64, or string as appropriate.
+func ConvertValue(typeName FeatureValueType, raw interface{}) (interface{}, error) {
+	switch typeName {
+	case TypeBoolean:
+		switch v := raw.(type) {
+		case bool:
+			return v, nil
+		case string:
+			return strconv.ParseBool(v)
+		default:
+			return strconv.ParseBool(fmt.Sprintf("%v", raw))
+		}
+
+	case TypeNumber:
+		switch v := raw.(type) {
+		case float64:
+			return v, nil
+		case int:
+			return float64(v), nil
+		case int64:
+			return float64(v), nil
+		case string:
+			return strconv.ParseFloat(v, 64)
+		default:
+			return strconv.ParseFloat(fmt.Sprintf("%v", raw), 64)
+		}
+
+	case TypeString, TypeJSON:
+		switch v := raw.(type) {
+		case string:
+			return v, nil
+		default:
+			return fmt.Sprintf("%v", raw), nil
+		}
+
+	default:
+		return nil, fmt.Errorf("unknown feature value type %q", typeName)
+	}
+}

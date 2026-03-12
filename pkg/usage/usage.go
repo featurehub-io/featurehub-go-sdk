@@ -67,6 +67,8 @@ type FeatureHubUsageValue struct {
 	Key           string
 	EnvironmentID string
 	Value         string
+	ValueType     models.FeatureValueType
+	RawValue      interface{}
 }
 
 // NewUsageValue constructs a FeatureHubUsageValue, converting the raw value via the active ConvertFunc.
@@ -76,6 +78,8 @@ func NewUsageValue(id, key, environmentID string, value interface{}, valueType m
 		Key:           key,
 		EnvironmentID: environmentID,
 		Value:         convert(value, valueType),
+		ValueType:     valueType,
+		RawValue:      value,
 	}
 }
 
@@ -147,6 +151,7 @@ type EventWithFeature interface {
 	*UsageEvent
 	SetContextAttributes(contextAttributes ContextRecord)
 	SetFeature(feature *FeatureHubUsageValue)
+	GetFeature() *FeatureHubUsageValue
 }
 
 // NewUsageEventWithFeature constructs a BaseWithFeature.
@@ -164,6 +169,7 @@ func (*BaseWithFeature) EventName() string { return "feature" }
 // Feature returns the associated FeatureHubUsageValue.
 func (e *BaseWithFeature) Feature() *FeatureHubUsageValue           { return e.feature }
 func (e *BaseWithFeature) SetFeature(feature *FeatureHubUsageValue) { e.feature = feature }
+func (e *BaseWithFeature) GetFeature() *FeatureHubUsageValue        { return e.feature }
 
 // ContextAttributes returns the context attributes.
 func (e *BaseWithFeature) ContextAttributes() ContextRecord { return e.contextAttributes }
@@ -196,6 +202,7 @@ type BaseFeaturesCollection struct {
 type FeaturesCollection interface {
 	UsageEvent
 	SetFeatureValues(featureValues []*FeatureHubUsageValue)
+	GetFeatureValues() []*FeatureHubUsageValue
 }
 
 // NewUsageFeaturesCollection constructs an empty BaseFeaturesCollection.
@@ -207,6 +214,10 @@ func NewUsageFeaturesCollection() *BaseFeaturesCollection {
 
 // EventName returns "feature-collection".
 func (*BaseFeaturesCollection) EventName() string { return "feature-collection" }
+func (c *BaseFeaturesCollection) GetFeatureValues() []*FeatureHubUsageValue {
+	return c.FeatureValues
+}
+
 func (c *BaseFeaturesCollection) SetFeatureValues(featureValues []*FeatureHubUsageValue) {
 	c.FeatureValues = featureValues
 }
@@ -225,6 +236,11 @@ func (c *BaseFeaturesCollection) CollectUsageRecord() ContextRecord {
 type BaseCollectionContext struct {
 	BaseFeaturesCollection
 	ContextAttributes ContextRecord
+}
+
+func (*BaseCollectionContext) GetFeatureValues() []*FeatureHubUsageValue {
+	//TODO implement me
+	panic("implement me")
 }
 
 type CollectionContext interface {
@@ -262,6 +278,11 @@ type UsageNamedFeaturesCollection struct {
 	name string
 }
 
+func (c *UsageNamedFeaturesCollection) GetFeatureValues() []*FeatureHubUsageValue {
+	//TODO implement me
+	panic("implement me")
+}
+
 // NewUsageNamedFeaturesCollection constructs a UsageNamedFeaturesCollection.
 func NewUsageNamedFeaturesCollection(name, userKey string, additionalData ContextRecord) *UsageNamedFeaturesCollection {
 	return &UsageNamedFeaturesCollection{
@@ -276,7 +297,7 @@ func (c *UsageNamedFeaturesCollection) EventName() string { return c.name }
 // Plugin is implemented by usage event consumers.
 type Plugin interface {
 	DefaultPluginAttributes() ContextRecord
-	Send(context context.Context, event UsageEvent)
+	Send(context context.Context, event UsageEvent) context.Context
 }
 
 // Provider is a factory for creating usage events and values.

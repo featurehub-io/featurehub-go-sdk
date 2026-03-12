@@ -78,10 +78,11 @@ type passiveRestPollPlugin struct {
 
 func (p *passiveRestPollPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
 
-func (p *passiveRestPollPlugin) Send(_ context.Context, _ usage.UsageEvent) {
+func (p *passiveRestPollPlugin) Send(ctx context.Context, _ usage.UsageEvent) context.Context {
 	if p.config.client != nil && p.config.requestedEdgeType == EdgePassiveRest {
 		p.config.client.Poll() //nolint:errcheck
 	}
+	return ctx
 }
 
 // Build - this is only relevant for Server Evaluated functionality. It pairs a single context with a single edge connection.

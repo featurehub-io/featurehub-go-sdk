@@ -23,8 +23,11 @@ func newChanPlugin() *chanPlugin {
 	return &chanPlugin{ch: make(chan usage.UsageEvent, 1)}
 }
 
-func (p *chanPlugin) DefaultPluginAttributes() usage.ContextRecord   { return nil }
-func (p *chanPlugin) Send(_ context.Context, event usage.UsageEvent) { p.ch <- event }
+func (p *chanPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
+func (p *chanPlugin) Send(ctx context.Context, event usage.UsageEvent) context.Context {
+	p.ch <- event
+	return ctx
+}
 
 // waitForEvent blocks until the plugin receives an event or the timeout elapses.
 func (p *chanPlugin) waitForEvent(t *testing.T, timeout time.Duration) usage.UsageEvent {

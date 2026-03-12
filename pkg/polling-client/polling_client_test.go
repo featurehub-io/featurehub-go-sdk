@@ -1,6 +1,7 @@
 package pollingclient
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -315,11 +316,11 @@ func TestResponseFlattensFeatureSetsEnvironmentID(t *testing.T) {
 		},
 	})
 
-	fs, _, _, err := repo.GetFeature("flag-a")
+	fs, _, _, err := repo.GetFeature(context.TODO(), "flag-a")
 	require.NoError(t, err)
 	assert.Equal(t, "env-abc", fs.EnvironmentID)
 
-	fs, _, _, err = repo.GetFeature("flag-b")
+	fs, _, _, err = repo.GetFeature(context.TODO(), "flag-b")
 	require.NoError(t, err)
 	assert.Equal(t, "env-abc", fs.EnvironmentID)
 }
@@ -337,11 +338,11 @@ func TestResponseMultipleEnvironmentsFlattened(t *testing.T) {
 		}},
 	})
 
-	fs1, _, _, err := repo.GetFeature("flag-1")
+	fs1, _, _, err := repo.GetFeature(context.TODO(), "flag-1")
 	require.NoError(t, err)
 	assert.Equal(t, "env-1", fs1.EnvironmentID)
 
-	fs2, _, _, err := repo.GetFeature("flag-2")
+	fs2, _, _, err := repo.GetFeature(context.TODO(), "flag-2")
 	require.NoError(t, err)
 	assert.Equal(t, "env-2", fs2.EnvironmentID)
 }
