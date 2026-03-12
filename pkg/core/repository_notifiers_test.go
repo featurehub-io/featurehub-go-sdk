@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -31,42 +32,42 @@ func TestRepositoryNotifiers(t *testing.T) {
 
 	// Feature1 gets one notifier:
 	var callback1called int
-	callbackFunc1 := func(*models.FeatureState) {
+	callbackFunc1 := func(_ context.Context, _ *models.FeatureState) {
 		callback1called++
 	}
 
-	repository.AddNotifierFeature("feature1", callbackFunc1)
+	repository.AddNotifierFeature(context.TODO(), "feature1", callbackFunc1)
 
 	// Feature 2 gets 2 notifiers (1/2):
 	var callback21called int
-	callbackFunc21 := func(*models.FeatureState) {
+	callbackFunc21 := func(_ context.Context, _ *models.FeatureState) {
 		callback21called++
 	}
-	feature2UUID1, _ := repository.AddNotifierFeature("feature2", callbackFunc21)
+	feature2UUID1, _ := repository.AddNotifierFeature(context.TODO(), "feature2", callbackFunc21)
 
 	// Feature 2 gets 2 notifiers (2/2):
 	var callback22called int
-	callbackFunc22 := func(*models.FeatureState) {
+	callbackFunc22 := func(_ context.Context, _ *models.FeatureState) {
 		callback22called++
 	}
-	feature2UUID2, _ := repository.AddNotifierFeature("feature2", callbackFunc22)
+	feature2UUID2, _ := repository.AddNotifierFeature(context.TODO(), "feature2", callbackFunc22)
 	assert.Len(t, repository.notifiers["feature2"], 2)
 	assert.NotEqual(t, feature2UUID1, feature2UUID2)
 
 	// Feature3 gets 1 notifer, but we'll delete it before it gets called:
 	var callback3called int
-	callbackFunc3 := func(*models.FeatureState) {
+	callbackFunc3 := func(_ context.Context, _ *models.FeatureState) {
 		callback3called++
 	}
 
-	feature2Deletable, _ := repository.AddNotifierFeature("feature2", callbackFunc22)
+	feature2Deletable, _ := repository.AddNotifierFeature(context.TODO(), "feature2", callbackFunc22)
 
 	// we are allowed to attach a callback to a feature that does not exist yet
-	_, feature3err := repository.AddNotifierFeature("feature3", callbackFunc3)
+	_, feature3err := repository.AddNotifierFeature(context.TODO(), "feature3", callbackFunc3)
 	assert.NoError(t, feature3err)
 
 	// Feature4 gets a notifier with a nil callback:
-	_, feature4Err := repository.AddNotifierFeature("feature4", nil)
+	_, feature4Err := repository.AddNotifierFeature(context.TODO(), "feature4", nil)
 	assert.Error(t, feature4Err)
 
 	// Prove that we've added the notifiers:
@@ -81,10 +82,10 @@ func TestRepositoryNotifiers(t *testing.T) {
 
 	// Add a readiness-listener:
 	var readinessListenerCalled = false
-	callbackReadiness := func() {
+	callbackReadiness := func(_ context.Context) {
 		readinessListenerCalled = true
 	}
-	repository.ReadinessListener(callbackReadiness)
+	repository.ReadinessListener(context.TODO(), callbackReadiness)
 
 	// Give the notifiers some time to think about what they've done:
 	time.Sleep(250 * time.Millisecond)
@@ -97,20 +98,20 @@ func TestRepositoryNotifiers(t *testing.T) {
 
 	// Add a BOOLEAN callback:
 	var callbackBooleanValue = false
-	callbackBoolean := func(value bool) {
+	callbackBoolean := func(_ context.Context, value bool) {
 		callbackBooleanValue = value
 	}
-	repository.AddNotifierBoolean("booleanfeature", callbackBoolean)
+	repository.AddNotifierBoolean(context.TODO(), "booleanfeature", callbackBoolean)
 
 	feature, _ = featureFromString(`{"id":"id-booleanfeature","key":"booleanfeature","type":"BOOLEAN","value":true}`)
 	repository.ProcessFeature(feature)
 
 	// Add a JSON callback:
 	var callbackJSONValue = `{}`
-	callbackJSON := func(value string) {
+	callbackJSON := func(_ context.Context, value string) {
 		callbackJSONValue = value
 	}
-	repository.AddNotifierJSON("jsonfeature", callbackJSON)
+	repository.AddNotifierJSON(context.TODO(), "jsonfeature", callbackJSON)
 
 	// Load the mock apiClient up with a "feature" event:
 	feature, _ = featureFromString(`{"id":"id-jsonfeature","key":"jsonfeature","type":"JSON","value":"{\"is_crufty\": true}"}`)
@@ -118,10 +119,10 @@ func TestRepositoryNotifiers(t *testing.T) {
 
 	// Add a NUMBER callback:
 	var callbackNumberValue float64 = 0
-	callbackNumber := func(value float64) {
+	callbackNumber := func(_ context.Context, value float64) {
 		callbackNumberValue = value
 	}
-	repository.AddNotifierNumber("numberfeature", callbackNumber)
+	repository.AddNotifierNumber(context.TODO(), "numberfeature", callbackNumber)
 
 	// Load the mock apiClient up with a "feature" event:
 	feature, _ = featureFromString(`{"id":"id-numberfeature","key":"numberfeature","type":"NUMBER","value":123456789}`)
@@ -129,10 +130,10 @@ func TestRepositoryNotifiers(t *testing.T) {
 
 	// Add a STRING callback:
 	var callbackStringValue = `{}`
-	callbackString := func(value string) {
+	callbackString := func(_ context.Context, value string) {
 		callbackStringValue = value
 	}
-	repository.AddNotifierString("stringfeature", callbackString)
+	repository.AddNotifierString(context.TODO(), "stringfeature", callbackString)
 
 	feature, _ = featureFromString(`{"id":"id-stringfeature","key":"stringfeature","type":"STRING","value":"this is a string"}`)
 	repository.ProcessFeature(feature)
@@ -155,10 +156,10 @@ func TestFeatureNotifierWhenKeyChanges(t *testing.T) {
 	repository := createRepository()
 
 	var callbackStringValue = `{}`
-	callbackString := func(value string) {
+	callbackString := func(_ context.Context, value string) {
 		callbackStringValue = value
 	}
-	repository.AddNotifierString("stringfeature", callbackString)
+	repository.AddNotifierString(context.TODO(), "stringfeature", callbackString)
 
 	repository.ProcessFeature(ffs(`{"id":"id-stringfeature","key":"stringfeature","type":"STRING","value":"this is a string","version":1}`))
 	fs, _, _, err := repository.GetFeature("stringfeature")

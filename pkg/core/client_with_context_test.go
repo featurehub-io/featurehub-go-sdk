@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -255,74 +256,74 @@ func TestClientWithContext(t *testing.T) {
 	}
 
 	// First make sure that we get the default value before repository-context is added:
-	assert.Equal(t, "this is the default value", derefString(repository.GetString("TestFeature1")))
+	assert.Equal(t, "this is the default value", derefString(repository.GetString(context.TODO(), "TestFeature1")))
 
 	// See if we can match the "country-thailand" attribute:
 	assert.Equal(t, "this is for the thais",
-		derefString(repository.WithContext(&models.Context{Country: models.ContextCountryThailand}).GetString("TestFeature1")))
+		derefString(repository.WithContext(&models.Context{Country: models.ContextCountryThailand}).GetString(context.TODO(), "TestFeature1")))
 
 	// See if we can match the "platform-unix" attribute:
 	assert.Equal(t, "this is for unix users",
-		derefString(repository.WithContext(&models.Context{Platform: models.ContextPlatformMacos}).GetString("TestFeature1")))
+		derefString(repository.WithContext(&models.Context{Platform: models.ContextPlatformMacos}).GetString(context.TODO(), "TestFeature1")))
 
 	// See if we can match the "device-notmobile" attribute:
 	assert.Equal(t, "this is not for mobile users",
-		derefString(repository.WithContext(&models.Context{Device: models.ContextDeviceServer}).GetString("TestFeature1")))
+		derefString(repository.WithContext(&models.Context{Device: models.ContextDeviceServer}).GetString(context.TODO(), "TestFeature1")))
 
 	// See if we can match the "userkey" attribute:
 	assert.Equal(t, "this is for userkey ออม",
-		derefString(repository.WithContext(&models.Context{Userkey: "ออม"}).GetString("TestFeature1")))
+		derefString(repository.WithContext(&models.Context{Userkey: "ออม"}).GetString(context.TODO(), "TestFeature1")))
 
 	// See if we can match the "version-less" attribute:
 	assert.Equal(t, "version less than 15.23.4",
-		derefString(repository.WithContext(&models.Context{Version: "5.6.7"}).GetString("TestFeature1")))
+		derefString(repository.WithContext(&models.Context{Version: "5.6.7"}).GetString(context.TODO(), "TestFeature1")))
 
 	// See if we can match the "version-lessequal" attribute:
 	assert.Equal(t, "version less than or equal to 15.23.4",
-		derefString(repository.WithContext(&models.Context{Version: "15.23.4"}).GetString("TestFeature1")))
+		derefString(repository.WithContext(&models.Context{Version: "15.23.4"}).GetString(context.TODO(), "TestFeature1")))
 
 	// See if we can match the "version-greater" attribute:
 	assert.Equal(t, "version greater than 16.0.0",
-		derefString(repository.WithContext(&models.Context{Version: "16.0.1"}).GetString("TestFeature1")))
+		derefString(repository.WithContext(&models.Context{Version: "16.0.1"}).GetString(context.TODO(), "TestFeature1")))
 
 	// See if we can match the "version-greaterequals" attribute:
 	assert.Equal(t, "version greater than or equal to 16.0.0",
-		derefString(repository.WithContext(&models.Context{Version: "16.0.0"}).GetString("TestFeature1")))
+		derefString(repository.WithContext(&models.Context{Version: "16.0.0"}).GetString(context.TODO(), "TestFeature1")))
 
 	// Look for a 33% rule (based on a pre-calculated hash):
 	assert.Equal(t, "this is for the 33 percent",
-		derefString(repository.WithContext(&models.Context{Userkey: "อ้วม"}).GetString("TestFeature2")))
+		derefString(repository.WithContext(&models.Context{Userkey: "อ้วม"}).GetString(context.TODO(), "TestFeature2")))
 
 	// Look for a 66% rule (based on a pre-calculated hash):
 	assert.Equal(t, "this is for the 66 percent",
-		derefString(repository.WithContext(&models.Context{Userkey: "1111111111", Session: "ศิริลักษณ์"}).GetString("TestFeature2")))
+		derefString(repository.WithContext(&models.Context{Userkey: "1111111111", Session: "ศิริลักษณ์"}).GetString(context.TODO(), "TestFeature2")))
 
 	// Get a default boolean value:
 	booleanValue, err := repository.
 		WithContext(&models.Context{Userkey: time.Now().String()}).
-		GetBoolean("TestBoolean")
+		GetBoolean(context.TODO(), "TestBoolean")
 	assert.NoError(t, err)
 	assert.Equal(t, true, booleanValue)
 
 	// Get a default json value:
 	assert.Equal(t, `{"test": "something"}`,
-		derefString(repository.WithContext(&models.Context{Userkey: time.Now().String()}).GetRawJSON("TestJSON")))
+		derefString(repository.WithContext(&models.Context{Userkey: time.Now().String()}).GetRawJSON(context.TODO(), "TestJSON")))
 
 	// Get a default number value:
 	assert.Equal(t, float64(54321),
-		derefNumber(repository.WithContext(&models.Context{Userkey: time.Now().String()}).GetNumber("TestNumber")))
+		derefNumber(repository.WithContext(&models.Context{Userkey: time.Now().String()}).GetNumber(context.TODO(), "TestNumber")))
 
 	// Get a default string value:
 	assert.Equal(t, "this is another string",
-		derefString(repository.WithContext(&models.Context{Userkey: time.Now().String()}).GetString("TestString")))
+		derefString(repository.WithContext(&models.Context{Userkey: time.Now().String()}).GetString(context.TODO(), "TestString")))
 
 	// See if we can match the "custom-bool" attribute:
 	assert.Equal(t, "you have the custom bool",
-		derefString(repository.WithContext(&models.Context{Custom: map[string]interface{}{"custom-bool": true}}).GetString("TestFeature1")))
+		derefString(repository.WithContext(&models.Context{Custom: map[string]interface{}{"custom-bool": true}}).GetString(context.TODO(), "TestFeature1")))
 
 	// See if we can match the "custom-string" attribute:
 	assert.Equal(t, "you have the custom string",
-		derefString(repository.WithContext(&models.Context{Custom: map[string]interface{}{"custom-string": "this is it"}}).GetString("TestFeature1")))
+		derefString(repository.WithContext(&models.Context{Custom: map[string]interface{}{"custom-string": "this is it"}}).GetString(context.TODO(), "TestFeature1")))
 }
 
 // --- Usage event emission ---
@@ -331,7 +332,7 @@ func TestClientWithContext(t *testing.T) {
 // accumulates every BaseWithFeature event emitted synchronously during the test.
 func captureUsageEvents(repo *ClientFeatureHubRepository) *[]*usage.BaseWithFeature {
 	var events []*usage.BaseWithFeature
-	repo.RegisterUsageStream(func(event usage.UsageEvent) {
+	repo.RegisterUsageStream(func(_ context.Context, event usage.UsageEvent) {
 		if e, ok := event.(*usage.BaseWithFeature); ok {
 			events = append(events, e)
 		}
@@ -347,7 +348,7 @@ func TestGetBooleanEmitsUsageEventWithDefaultValue(t *testing.T) {
 	events := captureUsageEvents(repo)
 
 	ctx := repo.WithContext(&models.Context{Userkey: "alice"})
-	val, err := ctx.GetBoolean("flag")
+	val, err := ctx.GetBoolean(context.TODO(), "flag")
 
 	require.NoError(t, err)
 	assert.True(t, val)
@@ -365,7 +366,7 @@ func TestGetNumberEmitsUsageEventWithDefaultValue(t *testing.T) {
 	events := captureUsageEvents(repo)
 
 	ctx := repo.WithContext(&models.Context{Userkey: "bob"})
-	val, err := ctx.GetNumber("count")
+	val, err := ctx.GetNumber(context.TODO(), "count")
 
 	require.NoError(t, err)
 	require.NotNil(t, val)
@@ -383,7 +384,7 @@ func TestGetStringEmitsUsageEventWithDefaultValue(t *testing.T) {
 	events := captureUsageEvents(repo)
 
 	ctx := repo.WithContext(&models.Context{Userkey: "carol"})
-	val, err := ctx.GetString("label")
+	val, err := ctx.GetString(context.TODO(), "label")
 
 	require.NoError(t, err)
 	require.NotNil(t, val)
@@ -401,7 +402,7 @@ func TestGetRawJSONEmitsUsageEvent(t *testing.T) {
 	events := captureUsageEvents(repo)
 
 	ctx := repo.WithContext(&models.Context{Userkey: "dave"})
-	_, err := ctx.GetRawJSON("cfg")
+	_, err := ctx.GetRawJSON(context.TODO(), "cfg")
 
 	require.NoError(t, err)
 	require.Len(t, *events, 1)
@@ -435,7 +436,7 @@ func TestStrategyMatchEmitsUsageEventWithStrategyValue(t *testing.T) {
 	events := captureUsageEvents(repo)
 
 	ctx := repo.WithContext(&models.Context{Userkey: "eve", Country: models.ContextCountryThailand})
-	val, err := ctx.GetString("TestFeature1")
+	val, err := ctx.GetString(context.TODO(), "TestFeature1")
 
 	require.NoError(t, err)
 	require.NotNil(t, val)
@@ -450,7 +451,7 @@ func TestFeatureNotFoundDoesNotEmitUsageEvent(t *testing.T) {
 	events := captureUsageEvents(repo)
 
 	ctx := repo.WithContext(&models.Context{Userkey: "frank"})
-	_, err := ctx.GetBoolean("absent")
+	_, err := ctx.GetBoolean(context.TODO(), "absent")
 
 	assert.Error(t, err)
 	assert.Empty(t, *events)
@@ -465,7 +466,7 @@ func TestInterceptorMatchEmitsUsageEventWhenFeatureExists(t *testing.T) {
 	events := captureUsageEvents(repo)
 
 	ctx := repo.WithContext(&models.Context{Userkey: "grace"})
-	val, err := ctx.GetBoolean("flag")
+	val, err := ctx.GetBoolean(context.TODO(), "flag")
 
 	require.NoError(t, err)
 	assert.True(t, val)
@@ -481,7 +482,7 @@ func TestInterceptorMatchOnUnknownFeatureDoesNotEmitUsageEvent(t *testing.T) {
 	events := captureUsageEvents(repo)
 
 	ctx := repo.WithContext(&models.Context{Userkey: "heidi"})
-	val, err := ctx.GetBoolean("absent")
+	val, err := ctx.GetBoolean(context.TODO(), "absent")
 
 	require.NoError(t, err)
 	assert.True(t, val)
@@ -494,7 +495,7 @@ func TestClientWithContextPropertiesReturnsNilForUnknownFeature(t *testing.T) {
 	repo := createRepository()
 	ctx := repo.WithContext(&models.Context{})
 
-	assert.Nil(t, ctx.Properties("does-not-exist"))
+	assert.Nil(t, ctx.Properties(context.TODO(), "does-not-exist"))
 }
 
 func TestClientWithContextPropertiesReturnsNilWhenFeatureHasNoProperties(t *testing.T) {
@@ -502,7 +503,7 @@ func TestClientWithContextPropertiesReturnsNilWhenFeatureHasNoProperties(t *test
 	repo.ProcessFeature(ffs(`{"id":"id-myfeature","key":"myfeature","type":"BOOLEAN","value":true,"version":1}`))
 	ctx := repo.WithContext(&models.Context{})
 
-	assert.Nil(t, ctx.Properties("myfeature"))
+	assert.Nil(t, ctx.Properties(context.TODO(), "myfeature"))
 }
 
 func TestClientWithContextPropertiesReturnsMapFromUnderlyingFeature(t *testing.T) {
@@ -510,7 +511,7 @@ func TestClientWithContextPropertiesReturnsMapFromUnderlyingFeature(t *testing.T
 	repo.ProcessFeature(ffs(`{"id":"id-myfeature","key":"myfeature","type":"STRING","value":"hello","version":1,"fp":{"env":"prod","tier":"gold"}}`))
 	ctx := repo.WithContext(&models.Context{})
 
-	result := ctx.Properties("myfeature")
+	result := ctx.Properties(context.TODO(), "myfeature")
 	assert.Equal(t, map[string]string{"env": "prod", "tier": "gold"}, result)
 }
 
@@ -521,5 +522,5 @@ func TestClientWithContextPropertiesIsConsistentAcrossContextSwitch(t *testing.T
 	ctx1 := repo.WithContext(&models.Context{Userkey: "user1"})
 	ctx2 := ctx1.WithContext(&models.Context{Userkey: "user2"})
 
-	assert.Equal(t, ctx1.Properties("myfeature"), ctx2.Properties("myfeature"))
+	assert.Equal(t, ctx1.Properties(context.TODO(), "myfeature"), ctx2.Properties(context.TODO(), "myfeature"))
 }

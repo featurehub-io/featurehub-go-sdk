@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
@@ -176,7 +177,7 @@ func TestInterceptorGetBooleanWithBoolOverride(t *testing.T) {
 	seedRepo(repo) // "flag" starts as false
 	repo.AddValueInterceptor(interceptorThatMatches(true))
 
-	value, err := repo.GetBoolean("flag")
+	value, err := repo.GetBoolean(context.TODO(), "flag")
 
 	require.NoError(t, err)
 	assert.True(t, value, "GetBoolean should return the interceptor's override value")
@@ -187,7 +188,7 @@ func TestInterceptorGetBooleanWithStringOverride(t *testing.T) {
 	seedRepo(repo)
 	repo.AddValueInterceptor(interceptorThatMatches("true")) // string → bool conversion
 
-	value, err := repo.GetBoolean("flag")
+	value, err := repo.GetBoolean(context.TODO(), "flag")
 
 	require.NoError(t, err)
 	assert.True(t, value)
@@ -198,7 +199,7 @@ func TestInterceptorGetNumberWithOverride(t *testing.T) {
 	seedRepo(repo) // "count" starts as 42
 	repo.AddValueInterceptor(interceptorThatMatches(float64(99)))
 
-	value, err := repo.GetNumber("count")
+	value, err := repo.GetNumber(context.TODO(), "count")
 
 	require.NoError(t, err)
 	require.NotNil(t, value)
@@ -210,7 +211,7 @@ func TestInterceptorGetStringWithOverride(t *testing.T) {
 	seedRepo(repo) // "label" starts as "default"
 	repo.AddValueInterceptor(interceptorThatMatches("overridden"))
 
-	value, err := repo.GetString("label")
+	value, err := repo.GetString(context.TODO(), "label")
 
 	require.NoError(t, err)
 	require.NotNil(t, value)
@@ -269,11 +270,11 @@ func TestInterceptorCanTargetSpecificKey(t *testing.T) {
 		return false, nil
 	})
 
-	flagValue, err := repo.GetBoolean("flag")
+	flagValue, err := repo.GetBoolean(context.TODO(), "flag")
 	require.NoError(t, err)
 	assert.True(t, flagValue, "interceptor override should apply to 'flag'")
 
-	labelValue, err := repo.GetString("label")
+	labelValue, err := repo.GetString(context.TODO(), "label")
 	require.NoError(t, err)
 	require.NotNil(t, labelValue)
 	assert.Equal(t, "default", *labelValue, "non-targeted key should use stored value")

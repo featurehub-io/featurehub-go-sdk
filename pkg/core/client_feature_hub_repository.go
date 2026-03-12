@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"sync"
@@ -21,7 +22,7 @@ type ClientFeatureHubRepository struct {
 	logger            *logrus.Logger
 	notifiers         notifiers
 	notifiersMutex    sync.Mutex
-	readinessListener func()
+	readinessListener func(context context.Context)
 	valueInterceptors []interfaces.FeatureValueInterceptor
 	usageProvider     usage.ProviderFactory
 	usageStreams      map[int]usage.StreamHandler
@@ -59,19 +60,19 @@ func (r *ClientFeatureHubRepository) RemoveUsageStream(id int) {
 	delete(r.usageStreams, id)
 }
 
-func (r *ClientFeatureHubRepository) EmitUsageEvent(event usage.UsageEvent) {
+func (r *ClientFeatureHubRepository) EmitUsageEvent(context context.Context, event usage.UsageEvent) {
 	for _, h := range r.usageStreams {
-		h(event)
+		h(context, event)
 	}
 }
 
 // ReadinessListener defines a callback function which will be triggered once the repository has received data for the first time:
-func (r *ClientFeatureHubRepository) ReadinessListener(callbackFunc func()) {
+func (r *ClientFeatureHubRepository) ReadinessListener(context context.Context, callbackFunc func(context context.Context)) {
 	r.readinessListener = callbackFunc
 
 	// if we are ready, we should callback
 	if r.IsReady() {
-		callbackFunc()
+		callbackFunc(context)
 	}
 }
 
@@ -85,7 +86,7 @@ func (r *ClientFeatureHubRepository) isReady() {
 		r.hasData = true
 		if r.readinessListener != nil {
 			r.logger.Trace("Calling readinessListener()")
-			r.readinessListener()
+			r.readinessListener(context.TODO())
 		} else {
 			r.logger.Trace("No registered readinessListener() to call")
 		}
@@ -157,7 +158,7 @@ func (r *ClientFeatureHubRepository) GetInternalBoolean(key string) (feature *mo
 }
 
 // GetBoolean searches for a feature by key, returns the value as a boolean:
-func (r *ClientFeatureHubRepository) GetBoolean(key string) (bool, error) {
+func (r *ClientFeatureHubRepository) GetBoolean(context context.Context, key string) (bool, error) {
 	_, _, value, err := r.GetInternalBoolean(key)
 	return value, err
 }
@@ -190,7 +191,7 @@ func (r *ClientFeatureHubRepository) GetInternalNumber(key string) (feature *mod
 }
 
 // GetNumber searches for a feature by key, returns the value as a float64:
-func (r *ClientFeatureHubRepository) GetNumber(key string) (*float64, error) {
+func (r *ClientFeatureHubRepository) GetNumber(context context.Context, key string) (*float64, error) {
 	_, _, value, err := r.GetInternalNumber(key)
 	return value, err
 }
@@ -219,42 +220,50 @@ func (r *ClientFeatureHubRepository) GetInternalString(key string, expectedType 
 }
 
 // GetRawJSON searches for a feature by key, returns the value as a JSON string:
-func (r *ClientFeatureHubRepository) GetRawJSON(key string) (*string, error) {
+func (r *ClientFeatureHubRepository) GetRawJSON(context context.Context, key string) (*string, error) {
 	_, _, value, err := r.GetInternalString(key, models.TypeJSON)
 	return value, err
 }
 
 // GetString searches for a feature by key, returns the value as a string:
-func (r *ClientFeatureHubRepository) GetString(key string) (*string, error) {
+func (r *ClientFeatureHubRepository) GetString(context context.Context, key string) (*string, error) {
 	_, _, value, err := r.GetInternalString(key, models.TypeString)
 	return value, err
 }
 
-func (r *ClientFeatureHubRepository) Number(featureKey string) float64 {
-	if f, e := r.GetNumber(featureKey); e == nil || f == nil {
-		return 0.0
+func (r *ClientFeatureHubRepository) Boolean(context context.Context, featureKey string, defaultValue bool) bool {
+	if f, e := r.GetBoolean(context, featureKey); e == nil {
+		return defaultValue
+	} else {
+		return f
+	}
+}
+
+func (r *ClientFeatureHubRepository) Number(context context.Context, featureKey string, defaultValue float64) float64 {
+	if f, e := r.GetNumber(context, featureKey); e == nil || f == nil {
+		return defaultValue
 	} else {
 		return *f
 	}
 }
 
-func (r *ClientFeatureHubRepository) JSON(featureKey string) string {
-	if f, e := r.GetRawJSON(featureKey); e == nil || f == nil {
-		return "{}"
+func (r *ClientFeatureHubRepository) JSON(context context.Context, featureKey string, defaultValue string) string {
+	if f, e := r.GetRawJSON(context, featureKey); e == nil || f == nil {
+		return defaultValue
 	} else {
 		return *f
 	}
 }
 
-func (r *ClientFeatureHubRepository) String(featureKey string) string {
-	if f, e := r.GetString(featureKey); e == nil || f == nil {
-		return ""
+func (r *ClientFeatureHubRepository) String(context context.Context, featureKey string, defaultValue string) string {
+	if f, e := r.GetString(context, featureKey); e == nil || f == nil {
+		return defaultValue
 	} else {
 		return *f
 	}
 }
 
-func (r *ClientFeatureHubRepository) Properties(featureKey string) map[string]string {
+func (r *ClientFeatureHubRepository) Properties(context context.Context, featureKey string) map[string]string {
 	r.featuresMutex.Lock()
 	defer r.featuresMutex.Unlock()
 
@@ -267,60 +276,60 @@ func (r *ClientFeatureHubRepository) Properties(featureKey string) map[string]st
 	return nil
 }
 
-func (r *ClientFeatureHubRepository) AddNotifierFeature(featureKey string, callbackFunc models.CallbackFuncFeature) (string, error) {
+func (r *ClientFeatureHubRepository) AddNotifierFeature(context context.Context, featureKey string, callbackFunc models.CallbackFuncFeature) (string, error) {
 	if callbackFunc == nil {
 		return "", errors.NewErrInvalidNotifierCallback("AddNotifierFeature needs a callbackFunc")
 	}
 
-	return r.addNotifier(notifier{
+	return r.addNotifier(context, notifier{
 		callbackFuncFeature: callbackFunc,
 		featureKey:          featureKey,
 	}, models.TypeFeature)
 }
 
 // AddNotifierBoolean adds a notifier callback for a BOOLEAN feature:
-func (r *ClientFeatureHubRepository) AddNotifierBoolean(featureKey string, callbackFunc models.CallbackFuncBoolean) (string, error) {
+func (r *ClientFeatureHubRepository) AddNotifierBoolean(context context.Context, featureKey string, callbackFunc models.CallbackFuncBoolean) (string, error) {
 	if callbackFunc == nil {
 		return "", errors.NewErrInvalidNotifierCallback("AddNotifierBoolean needs a callbackFunc")
 	}
 
-	return r.addNotifier(notifier{
+	return r.addNotifier(context, notifier{
 		callbackFuncBoolean: callbackFunc,
 		featureKey:          featureKey,
 	}, models.TypeBoolean)
 }
 
 // AddNotifierJSON adds a notifier callback for a JSON feature:
-func (r *ClientFeatureHubRepository) AddNotifierJSON(featureKey string, callbackFunc models.CallbackFuncJSON) (string, error) {
+func (r *ClientFeatureHubRepository) AddNotifierJSON(context context.Context, featureKey string, callbackFunc models.CallbackFuncJSON) (string, error) {
 	if callbackFunc == nil {
 		return "", errors.NewErrInvalidNotifierCallback("AddNotifierJSON needs a callbackFunc")
 	}
 
-	return r.addNotifier(notifier{
+	return r.addNotifier(context, notifier{
 		callbackFuncJSON: callbackFunc,
 		featureKey:       featureKey,
 	}, models.TypeJSON)
 }
 
 // AddNotifierNumber adds a notifier callback for a NUMBER feature:
-func (r *ClientFeatureHubRepository) AddNotifierNumber(featureKey string, callbackFunc models.CallbackFuncNumber) (string, error) {
+func (r *ClientFeatureHubRepository) AddNotifierNumber(context context.Context, featureKey string, callbackFunc models.CallbackFuncNumber) (string, error) {
 	if callbackFunc == nil {
 		return "", errors.NewErrInvalidNotifierCallback("AddNotifierNumber needs a callbackFunc")
 	}
 
-	return r.addNotifier(notifier{
+	return r.addNotifier(context, notifier{
 		callbackFuncNumber: callbackFunc,
 		featureKey:         featureKey,
 	}, models.TypeNumber)
 }
 
 // AddNotifierString adds a notifier callback for a STRING feature:
-func (r *ClientFeatureHubRepository) AddNotifierString(featureKey string, callbackFunc models.CallbackFuncString) (string, error) {
+func (r *ClientFeatureHubRepository) AddNotifierString(context context.Context, featureKey string, callbackFunc models.CallbackFuncString) (string, error) {
 	if callbackFunc == nil {
 		return "", errors.NewErrInvalidNotifierCallback("AddNotifierString needs a callbackFunc")
 	}
 
-	return r.addNotifier(notifier{
+	return r.addNotifier(context, notifier{
 		callbackFuncString: callbackFunc,
 		featureKey:         featureKey,
 	}, models.TypeString)
@@ -329,7 +338,7 @@ func (r *ClientFeatureHubRepository) AddNotifierString(featureKey string, callba
 // addNotifier
 // for historical reasons we can attach to features we don't have, but it means more checking when we do the  triggering
 // that we have the right feature type that matches the right notifier callback (see notify function)
-func (r *ClientFeatureHubRepository) addNotifier(newNotifier notifier, expectedValueType models.FeatureValueType) (string, error) {
+func (r *ClientFeatureHubRepository) addNotifier(context context.Context, newNotifier notifier, expectedValueType models.FeatureValueType) (string, error) {
 	feature, _, _, _ := r.GetFeature(newNotifier.getKey())
 
 	if feature != nil && expectedValueType != models.TypeFeature && feature.Type != expectedValueType {
@@ -345,7 +354,7 @@ func (r *ClientFeatureHubRepository) addNotifier(newNotifier notifier, expectedV
 	r.logger.WithField("key", newNotifier.featureKey).WithField("uuid", newNotifier.uuid).Debug("Added a notifier")
 
 	if feature != nil {
-		newNotifier.notify(feature)
+		newNotifier.notify(context, feature)
 	}
 
 	return newNotifier.uuid, nil
@@ -422,7 +431,7 @@ func (r *ClientFeatureHubRepository) ProcessFeature(feature *models.FeatureState
 
 	r.logger.WithField("key", feature.Key).Debug("Received a new feature from server")
 	r.features[feature.Key] = feature
-	r.notify(feature)
+	r.notify(context.TODO(), feature)
 	r.isReady()
 }
 
@@ -446,7 +455,7 @@ func (r *ClientFeatureHubRepository) ProcessFeatures(features []*models.FeatureS
 				continue
 			}
 		}
-		r.notify(newFeature)
+		r.notify(context.TODO(), newFeature)
 	}
 
 	r.hasData = true
@@ -488,7 +497,7 @@ func (r *ClientFeatureHubRepository) GetFeatures() []*models.FeatureIdentity {
 }
 
 // notify triggers all callbacks registered for the given feature:
-func (r *ClientFeatureHubRepository) notify(feature *models.FeatureState) error {
+func (r *ClientFeatureHubRepository) notify(context context.Context, feature *models.FeatureState) error {
 	r.notifiersMutex.Lock()
 	defer r.notifiersMutex.Unlock()
 
@@ -498,7 +507,7 @@ func (r *ClientFeatureHubRepository) notify(feature *models.FeatureState) error 
 	}
 
 	for _, notifier := range featureKeyNotifiers {
-		notifier.notify(feature)
+		notifier.notify(context, feature)
 		r.logger.WithField("key", feature.Key).WithField("uuid", notifier.uuid).Debug("Triggered a notifier")
 	}
 

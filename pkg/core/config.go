@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -77,7 +78,7 @@ type passiveRestPollPlugin struct {
 
 func (p *passiveRestPollPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
 
-func (p *passiveRestPollPlugin) Send(_ usage.UsageEvent) {
+func (p *passiveRestPollPlugin) Send(_ context.Context, _ usage.UsageEvent) {
 	if p.config.client != nil && p.config.requestedEdgeType == EdgePassiveRest {
 		p.config.client.Poll() //nolint:errcheck
 	}
@@ -111,6 +112,11 @@ func (c *Config) SetRepository(repository *ClientFeatureHubRepository) {
 }
 
 func (c *Config) closeEdge() {
+	c.Close()
+}
+
+// Close shuts down the active edge client, if any, and clears the reference.
+func (c *Config) Close() {
 	if c.client != nil {
 		c.client.Close()
 		c.client = nil
@@ -150,8 +156,8 @@ func (c *Config) IsReady() bool {
 
 // ReadinessListener - Configure the SDK with a function to call when we're ready (up and running with some data)
 // delegates to the internal repository
-func (c *Config) ReadinessListener(callbackFunc func()) {
-	c.checkRepository().ReadinessListener(callbackFunc)
+func (c *Config) ReadinessListener(context context.Context, callbackFunc func(context context.Context)) {
+	c.checkRepository().ReadinessListener(context, callbackFunc)
 }
 
 func (c *Config) connect(header *string) (*Config, error) {

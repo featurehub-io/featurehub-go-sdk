@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -22,8 +23,8 @@ func newChanPlugin() *chanPlugin {
 	return &chanPlugin{ch: make(chan usage.UsageEvent, 1)}
 }
 
-func (p *chanPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
-func (p *chanPlugin) Send(event usage.UsageEvent)                  { p.ch <- event }
+func (p *chanPlugin) DefaultPluginAttributes() usage.ContextRecord   { return nil }
+func (p *chanPlugin) Send(_ context.Context, event usage.UsageEvent) { p.ch <- event }
 
 // waitForEvent blocks until the plugin receives an event or the timeout elapses.
 func (p *chanPlugin) waitForEvent(t *testing.T, timeout time.Duration) usage.UsageEvent {
@@ -109,7 +110,7 @@ func TestRegisterUsagePluginReceivesEvents(t *testing.T) {
 	config.RegisterUsagePlugin(plugin)
 
 	event := simpleEvent("user-1")
-	config.repository.EmitUsageEvent(event)
+	config.repository.EmitUsageEvent(context.TODO(), event)
 
 	received := plugin.waitForEvent(t, time.Second)
 	require.NotNil(t, received)
@@ -123,7 +124,7 @@ func TestRegisterMultipleUsagePluginsAllReceiveEvents(t *testing.T) {
 	config.RegisterUsagePlugin(p1)
 	config.RegisterUsagePlugin(p2)
 
-	config.repository.EmitUsageEvent(simpleEvent("user-2"))
+	config.repository.EmitUsageEvent(context.TODO(), simpleEvent("user-2"))
 
 	assert.Equal(t, "user-2", p1.waitForEvent(t, time.Second).UserKey())
 	assert.Equal(t, "user-2", p2.waitForEvent(t, time.Second).UserKey())
@@ -163,7 +164,7 @@ func TestPassiveRestPluginCallsPollOnUsageEvent(t *testing.T) {
 	mockClient := &mockEdgeClient{}
 	config.client = mockClient
 
-	config.repository.EmitUsageEvent(simpleEvent("user-1"))
+	config.repository.EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
 
 	// dispatch is async — wait briefly for the goroutine to complete
 	assert.Eventually(t, func() bool { return mockClient.pollCalls == 1 }, time.Second, time.Millisecond)
@@ -176,7 +177,7 @@ func TestPassiveRestPluginDoesNotPollWhenClientIsNil(t *testing.T) {
 	// client remains nil
 
 	assert.NotPanics(t, func() {
-		config.repository.EmitUsageEvent(simpleEvent("user-1"))
+		config.repository.EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
 	})
 }
 
@@ -188,7 +189,7 @@ func TestPassiveRestPluginDoesNotPollForActiveRest(t *testing.T) {
 	mockClient := &mockEdgeClient{}
 	config.client = mockClient
 
-	config.repository.EmitUsageEvent(simpleEvent("user-1"))
+	config.repository.EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
 
 	// Give the goroutine time to run if it were going to
 	time.Sleep(50 * time.Millisecond)
@@ -203,10 +204,36 @@ func TestPassiveRestPluginDoesNotPollForStreaming(t *testing.T) {
 	mockClient := &mockEdgeClient{}
 	config.client = mockClient
 
-	config.repository.EmitUsageEvent(simpleEvent("user-1"))
+	config.repository.EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
 
 	time.Sleep(50 * time.Millisecond)
 	assert.Equal(t, 0, mockClient.pollCalls)
+}
+
+// --- Close ---
+
+func TestCloseCallsClientCloseAndNilsReference(t *testing.T) {
+	mockClient := &mockEdgeClient{}
+	config := &Config{client: mockClient}
+
+	config.Close()
+
+	assert.Nil(t, config.client)
+}
+
+func TestCloseIsNoopWhenClientIsNil(t *testing.T) {
+	config := &Config{}
+	assert.NotPanics(t, func() { config.Close() })
+	assert.Nil(t, config.client)
+}
+
+func TestCloseIsIdempotent(t *testing.T) {
+	mockClient := &mockEdgeClient{}
+	config := &Config{client: mockClient}
+
+	config.Close()
+	assert.NotPanics(t, func() { config.Close() })
+	assert.Nil(t, config.client)
 }
 
 // --- Build ---

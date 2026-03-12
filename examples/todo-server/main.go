@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -102,7 +103,7 @@ func nameHandler(w http.ResponseWriter, r *http.Request) {
 	name := mux.Vars(r)["name"]
 	ctx := fhConfig.WithContext(&models.Context{Userkey: name})
 
-	if uppercase, _ := ctx.GetBoolean("FEATURE_TITLE_TO_UPPERCASE"); uppercase {
+	if uppercase, _ := ctx.GetBoolean(r.Context(), "FEATURE_TITLE_TO_UPPERCASE"); uppercase {
 		fmt.Fprint(w, "HELLO WORLD")
 	} else {
 		fmt.Fprint(w, "hello world")
@@ -237,15 +238,15 @@ func todoList(user string) []Todo {
 func processTitle(ctx *core.ClientWithContext, title string) string {
 	newTitle := title
 
-	if str, err := ctx.GetString("FEATURE_STRING"); err == nil && str != nil && title == "buy" {
+	if str, err := ctx.GetString(context.TODO(), "FEATURE_STRING"); err == nil && str != nil && title == "buy" {
 		newTitle = fmt.Sprintf("%s %s", title, *str)
 	}
 
-	if num, err := ctx.GetNumber("FEATURE_NUMBER"); err == nil && num != nil && title == "pay" {
+	if num, err := ctx.GetNumber(context.TODO(), "FEATURE_NUMBER"); err == nil && num != nil && title == "pay" {
 		newTitle = fmt.Sprintf("%s %g", title, *num)
 	}
 
-	if rawJSON, err := ctx.GetRawJSON("FEATURE_JSON"); err == nil && rawJSON != nil && title == "find" {
+	if rawJSON, err := ctx.GetRawJSON(context.TODO(), "FEATURE_JSON"); err == nil && rawJSON != nil && title == "find" {
 		var obj map[string]interface{}
 		if json.Unmarshal([]byte(*rawJSON), &obj) == nil {
 			if foo, ok := obj["foo"].(string); ok {
@@ -254,7 +255,7 @@ func processTitle(ctx *core.ClientWithContext, title string) string {
 		}
 	}
 
-	if uppercase, _ := ctx.GetBoolean("FEATURE_TITLE_TO_UPPERCASE"); uppercase {
+	if uppercase, _ := ctx.GetBoolean(context.TODO(), "FEATURE_TITLE_TO_UPPERCASE"); uppercase {
 		newTitle = strings.ToUpper(newTitle)
 	}
 

@@ -9,9 +9,11 @@ Features
 * Config type, with validation and defaults
 * StreamingClient implementation:
     - Features are made available through "Get" methods:
-        - `GetFeature` returns a whole feature (by key) with full metadata (but an untyped value)
         - `GetBoolean` returns a boolean feature (by key), or an error if it is unable to assert the value to a boolean
         - `GetNumber` / `GetRawJSON` / `GetString` as above
+      - Features are also made available through convenience functions:
+        - `Boolean(ctx, key, default), String(ctx, key, default), JSON(ctx, key, default), Number(ctx, key, default)` methods.
+        If the feature is not found or is in error they return the supplied default value.
     - Levelled Logging (you can choose how verbose to make this)
 	- Notifiers can be added for named feature keys, which will trigger a user-provided callback function whenever a feature with this key is updated
 	- Notifiers can be added ahead of time (before the client even knows about the feature-keys in question)
@@ -69,26 +71,28 @@ There are 3 steps to connecting:
 ```
 
 ### Requesting Features
+
+All feature retrieval methods accept a `context.Context` as their first argument. Pass the request context from your HTTP handler (or `context.Background()` / `context.TODO()` where none is available) so that usage events carry the correct cancellation and tracing metadata.
+
 The client SDK offers various `Get` methods to retrieve different types of features:
 
-* `GetBoolean(key)`: returns a true or false
-* `GetRawJSON(key)`: returns a serialised JSON object
-* `GetNumber(key)`: returns a `*float64`
-* `GetString(key)`: returns a `*string`
+* `GetBoolean(ctx, key)`: returns a `bool` and an error
+* `GetRawJSON(ctx, key)`: returns a `*string` containing serialised JSON
+* `GetNumber(ctx, key)`: returns a `*float64`
+* `GetString(ctx, key)`: returns a `*string`
 
-Each of these exposes a possible error if the key does not exist or the underlying data is
-not of a valid type. `GetBoolean` will always return a true or false value, but the others
-can return nil if they are unset in your FeatureHub UI. If you wish to always return a default
-value but with no possible error condition, use:
+Each of these returns an error if the key does not exist or the underlying data is not of the expected type. `GetBoolean` always returns a `bool`; the others return `nil` when the value is unset in the FeatureHub UI.
 
-* `Boolean(key)`: returns true only if the key exists and is set to true
-* `JSON(key)`: will always return at least `{}` even if the key does not exist or it is nil
-* `Number(key)`: will return `0.0` at least, even if the key does not exist or it is nil
-* `String(key)`: will return `""` at least, even if the key does not exist or it is nil
+If you prefer a simpler API with no error handling, use the convenience methods. They take an explicit default value returned when the feature is absent or in error:
+
+* `Boolean(ctx, key, defaultValue bool) bool`
+* `JSON(ctx, key, defaultValue string) string`
+* `Number(ctx, key, defaultValue float64) float64`
+* `String(ctx, key, defaultValue string) string`
 
 #### Retrieve a BOOLEAN value:
 ```go
-	someBoolean, err := fhClient.GetBoolean("booleanfeature")
+	someBoolean, err := fhClient.GetBoolean(r.Context(), "booleanfeature")
 	if err != nil {
 		log.Fatalf("Error retrieving a BOOLEAN feature: %s", err)
 	}
@@ -97,7 +101,7 @@ value but with no possible error condition, use:
 
 #### Retrieve a JSON value:
 ```go
-	someJSON, err := fhClient.GetRawJSON("jsonfeature")
+	someJSON, err := fhClient.GetRawJSON(r.Context(), "jsonfeature")
 	if err != nil {
 		log.Fatalf("Error retrieving a JSON feature: %s", err)
 	}
@@ -106,7 +110,7 @@ value but with no possible error condition, use:
 
 #### Retrieve a NUMBER value:
 ```go
-	someNumber, err := fhClient.GetNumber("numberfeature")
+	someNumber, err := fhClient.GetNumber(r.Context(), "numberfeature")
 	if err != nil {
 		log.Fatalf("Error retrieving a NUMBER feature: %s", err)
 	}
@@ -115,11 +119,20 @@ value but with no possible error condition, use:
 
 #### Retrieve a STRING value:
 ```go
-	someString, err := fhClient.GetString("stringfeature")
+	someString, err := fhClient.GetString(r.Context(), "stringfeature")
 	if err != nil {
 		log.Fatalf("Error retrieving a STRING feature: %s", err)
 	}
 	// check if someString is nil before using
+```
+
+#### Using convenience methods with a default value:
+```go
+	// Returns false if the flag is absent; no error to handle.
+	enabled := fhClient.Boolean(r.Context(), "darkMode", false)
+
+	// Returns 10.0 if the feature is absent or nil.
+	pageSize := fhClient.Number(r.Context(), "maxPageSize", 10.0)
 ```
 
 
@@ -128,7 +141,7 @@ value but with no possible error condition, use:
 Features can carry an optional set of key/value string properties configured in the FeatureHub UI (serialised as `"fp"` in the JSON payload). These are useful for attaching metadata to a feature flag — for example a display name, a link to a ticket, or a tier label.
 
 ```go
-	props := fhClient.Properties("myfeature") // map[string]string, or nil if absent
+	props := fhClient.Properties(r.Context(), "myfeature") // map[string]string, or nil if absent
 	if tier, ok := props["tier"]; ok {
 		log.Printf("Feature tier: %s", tier)
 	}
@@ -230,17 +243,31 @@ fhConfig.AddValueInterceptor(myInterceptor)
 ### Configuring Notifiers (callbacks)
 The client SDK allows the user to define callback notifications which will be triggered whenever a specific feature key is updated.
 Notifiers can be defined at any time, even before the client has received data.
-* `AddNotifierBoolean(key string, callback func(bool))`: Calls the provided function with a boolean value
-* `AddNotifierFeature(key string, callback func(*models.FeatureState))`: Calls the provided function with a raw feature state
-* `AddNotifierJSON(key string, callback func(string))`: Calls the provided function with a JSON string value
-* `AddNotifierNumber(key string, callback func(float64))`: Calls the provided function with a float64 value
-* `AddNotifierString(key string, callback func(string))`: Calls the provided function with a string value
+
+All `AddNotifier*` methods accept a `context.Context` as their first argument, and the callback receives a `context.Context` as its first argument.
+
+* `AddNotifierBoolean(ctx, key string, callback func(context.Context, bool))`: Calls the provided function with a boolean value
+* `AddNotifierFeature(ctx, key string, callback func(context.Context, *models.FeatureState))`: Calls the provided function with a raw feature state
+* `AddNotifierJSON(ctx, key string, callback func(context.Context, string))`: Calls the provided function with a JSON string value
+* `AddNotifierNumber(ctx, key string, callback func(context.Context, float64))`: Calls the provided function with a float64 value
+* `AddNotifierString(ctx, key string, callback func(context.Context, string))`: Calls the provided function with a string value
 * `DeleteNotifier(key string) error`: Deletes any configured notifier for the given key (or returns an error if no notifier was found)
 
+```go
+fhClient.AddNotifierBoolean(ctx, "darkMode", func(ctx context.Context, value bool) {
+    log.Printf("darkMode changed to %v", value)
+})
+```
 
 ### Configuring a Readiness Listener
 The client SDK allows the user to define a callback function which will be triggered once, when the client first receives some data from the server.
-* `ReadinessListener(callback func())`: Sets the readiness listener to a specific user-provided function
+* `ReadinessListener(ctx context.Context, callback func(context.Context))`: Sets the readiness listener; both the registration call and the callback receive a context.
+
+```go
+fhConfig.ReadinessListener(ctx, func(ctx context.Context) {
+    log.Println("FeatureHub is ready")
+})
+```
 
 
 ### Client-side rollout strategies
@@ -252,7 +279,7 @@ Some rollout strategies need to be calculated per-request, which means that we c
 	fhClient.Custom["test"] = true
 
 	// Now retrieved feature values will be evaluated against your context:
-	featureValue, err = fhClient.GetString("featureKey")
+	featureValue, err = fhClient.GetString(r.Context(), "featureKey")
 ```
 
 If you have a complex context then you can define it as a single struct:
@@ -276,7 +303,7 @@ If you have a complex context then you can define it as a single struct:
 	fhClient := fhConfig.WithContext(clientContext)
 
 	// Now retrieved feature values will be evaluated against your context:
-	featureValue, err = fhClient.GetString("featureKey")
+	featureValue, err = fhClient.GetString(r.Context(), "featureKey")
 ```
 
 If the featureValue has rollout strategies defined then they will be applied according to the client context you provide.
@@ -345,7 +372,7 @@ fhConfig.Connect()
 // Each call to GetBoolean / GetString / etc. will trigger a background poll
 // if the cache has expired.
 ctx := fhConfig.NewContext()
-ctx.GetBoolean("myFlag")
+ctx.GetBoolean(context.Background(), "myFlag")
 ```
 
 ### Manually recording usage events
@@ -357,7 +384,7 @@ You can emit your own usage events via the context at any point — for example 
 `RecordNamedUsage` creates an event named after the first argument. It is automatically enriched with the current user key, all feature values, and context attributes:
 
 ```go
-ctx.RecordNamedUsage("page-view", usage.ContextRecord{
+ctx.RecordNamedUsage(r.Context(), "page-view", usage.ContextRecord{
     "page": "/checkout",
     "referrer": "email-campaign",
 })
@@ -368,8 +395,8 @@ ctx.RecordNamedUsage("page-view", usage.ContextRecord{
 `GetContextUsage` builds a snapshot of the entire feature state evaluated in the current context. You can enrich it and then emit it:
 
 ```go
-snapshot := ctx.GetContextUsage()
-ctx.RecordUsageEvent(snapshot)
+snapshot := ctx.GetContextUsage(r.Context())
+ctx.RecordUsageEvent(r.Context(), snapshot)
 ```
 
 #### Record a raw event
@@ -378,11 +405,11 @@ You can construct and emit any `UsageEvent` directly:
 
 ```go
 event := usage.NewUsageEventWithFeature(
-    usage.NewUsageValue("feature-id", "myFlag", true, models.TypeBoolean),
+    usage.NewUsageValue("feature-id", "myFlag", "", true, models.TypeBoolean),
     usage.ContextRecord{"page": "/home"},
     "user-123",
 )
-ctx.RecordUsageEvent(event)
+ctx.RecordUsageEvent(r.Context(), event)
 ```
 
 ### Usage event types

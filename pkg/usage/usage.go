@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -275,7 +276,7 @@ func (c *UsageNamedFeaturesCollection) EventName() string { return c.name }
 // Plugin is implemented by usage event consumers.
 type Plugin interface {
 	DefaultPluginAttributes() ContextRecord
-	Send(event UsageEvent)
+	Send(context context.Context, event UsageEvent)
 }
 
 // Provider is a factory for creating usage events and values.

@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -62,46 +63,46 @@ func TestRepositoryFeatures(t *testing.T) {
 	assert.Equal(t, "this is a string", value)
 
 	// Look for a boolean feature that is NOT a boolean:
-	booleanFeature, err := repo.GetBoolean("stringfeature")
+	booleanFeature, err := repo.GetBoolean(context.TODO(), "stringfeature")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrInvalidType{}, err)
 
 	// Look for a boolean feature that IS a boolean:
-	booleanFeature, err = repo.GetBoolean("booleanfeature")
+	booleanFeature, err = repo.GetBoolean(context.TODO(), "booleanfeature")
 	assert.NoError(t, err)
 	assert.Equal(t, true, booleanFeature)
 
 	// Look for a JSON feature that is NOT JSON:
-	jsonFeature, err := repo.GetRawJSON("numberfeature")
+	jsonFeature, err := repo.GetRawJSON(context.TODO(), "numberfeature")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrInvalidType{}, err)
 
 	// Look for a JSON feature that IS JSON:
-	jsonFeature, err = repo.GetRawJSON("jsonfeature")
+	jsonFeature, err = repo.GetRawJSON(context.TODO(), "jsonfeature")
 	assert.NoError(t, err)
 	if assert.NotNil(t, jsonFeature) {
 		assert.Equal(t, `{"is_crufty": true}`, *jsonFeature)
 	}
 
 	// Look for a number feature that is NOT a number:
-	numberFeature, err := repo.GetNumber("stringfeature")
+	numberFeature, err := repo.GetNumber(context.TODO(), "stringfeature")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrInvalidType{}, err)
 
 	// Look for a number feature that IS a number:
-	numberFeature, err = repo.GetNumber("numberfeature")
+	numberFeature, err = repo.GetNumber(context.TODO(), "numberfeature")
 	assert.NoError(t, err)
 	if assert.NotNil(t, numberFeature) {
 		assert.Equal(t, float64(123456789), *numberFeature)
 	}
 
 	// Look for a string feature that is NOT a string:
-	stringFeature, err := repo.GetString("numberfeature")
+	stringFeature, err := repo.GetString(context.TODO(), "numberfeature")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrInvalidType{}, err)
 
 	// Look for a string feature that DOES exist:
-	stringFeature, err = repo.GetString("stringfeature")
+	stringFeature, err = repo.GetString(context.TODO(), "stringfeature")
 	assert.NoError(t, err)
 	if assert.NotNil(t, stringFeature) {
 		assert.Equal(t, "this is a string", *stringFeature)
@@ -112,7 +113,7 @@ func TestRepositoryFeatures(t *testing.T) {
 
 	repo.ProcessFeature(anotherFeature)
 
-	booleanFeature, err = repo.GetBoolean("booleanfeature")
+	booleanFeature, err = repo.GetBoolean(context.TODO(), "booleanfeature")
 	assert.NoError(t, err)
 	assert.Equal(t, false, booleanFeature)
 
@@ -121,7 +122,7 @@ func TestRepositoryFeatures(t *testing.T) {
 func TestPropertiesReturnsNilForUnknownFeature(t *testing.T) {
 	repo := createRepository()
 
-	result := repo.Properties("does-not-exist")
+	result := repo.Properties(context.TODO(), "does-not-exist")
 	assert.Nil(t, result)
 }
 
@@ -129,7 +130,7 @@ func TestPropertiesReturnsNilWhenFeatureHasNoProperties(t *testing.T) {
 	repo := createRepository()
 	repo.ProcessFeature(ffs(`{"id":"id-myfeature","key":"myfeature","type":"BOOLEAN","value":true,"version":1}`))
 
-	result := repo.Properties("myfeature")
+	result := repo.Properties(context.TODO(), "myfeature")
 	assert.Nil(t, result)
 }
 
@@ -137,7 +138,7 @@ func TestPropertiesReturnsMapWhenFeatureHasProperties(t *testing.T) {
 	repo := createRepository()
 	repo.ProcessFeature(ffs(`{"id":"id-myfeature","key":"myfeature","type":"STRING","value":"hello","version":1,"fp":{"color":"red","size":"large"}}`))
 
-	result := repo.Properties("myfeature")
+	result := repo.Properties(context.TODO(), "myfeature")
 	assert.Equal(t, map[string]string{"color": "red", "size": "large"}, result)
 }
 
@@ -153,7 +154,7 @@ func TestPropertiesReturnsEmptyMapForFeatureWithEmptyProperties(t *testing.T) {
 	}
 	repo.ProcessFeature(feature)
 
-	result := repo.Properties("myfeature")
+	result := repo.Properties(context.TODO(), "myfeature")
 	assert.NotNil(t, result)
 	assert.Empty(t, result)
 }

@@ -1,6 +1,8 @@
 package interfaces
 
 import (
+	"context"
+
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/usage"
 )
@@ -9,24 +11,25 @@ import (
 // is implemented by the main repository as well as the contexts. A context allows strategies to be
 // applied, whereas requesting features directly from the repository does not allow this.
 type RepositoryContext interface {
-	AddNotifierBoolean(featureKey string, callbackFunc models.CallbackFuncBoolean) (notifierUUID string, err error) // Configure a notifier for a BOOLEAN value:
-	AddNotifierJSON(featureKey string, callbackFunc models.CallbackFuncJSON) (notifierUUID string, err error)       // Configure a notifier for a JSON value:
-	AddNotifierNumber(featureKey string, callbackFunc models.CallbackFuncNumber) (notifierUUID string, err error)   // Configure a notifier for a NUMBER value:
-	AddNotifierString(featureKey string, callbackFunc models.CallbackFuncString) (notifierUUID string, err error)   // Configure a notifier for a STRING value:
-	AddNotifierFeature(featureKey string, callbackFunc models.CallbackFuncFeature) (notifierUUID string, err error) // Configure a notifier for a FeatureState:
-	DeleteNotifier(featureKey, notifierUUID string) error                                                           // Remove a previously configured notifier (by key and UUID, because we support more than one notifier per key)
-	GetBoolean(featureKey string) (bool, error)                                                                     // Retrieve a value (by key) for a BOOLEAN feature
-	GetNumber(featureKey string) (*float64, error)                                                                  // Retrieve a value (by key) for a NUMBER feature
-	GetRawJSON(featureKey string) (*string, error)                                                                  // Retrieve a value (by key) for a JSON feature
-	GetString(featureKey string) (*string, error)                                                                   // Retrieve a value (by key) for a STRING feature
+	AddNotifierBoolean(context context.Context, featureKey string, callbackFunc models.CallbackFuncBoolean) (notifierUUID string, err error) // Configure a notifier for a BOOLEAN value:
+	AddNotifierJSON(context context.Context, featureKey string, callbackFunc models.CallbackFuncJSON) (notifierUUID string, err error)       // Configure a notifier for a JSON value:
+	AddNotifierNumber(context context.Context, featureKey string, callbackFunc models.CallbackFuncNumber) (notifierUUID string, err error)   // Configure a notifier for a NUMBER value:
+	AddNotifierString(context context.Context, featureKey string, callbackFunc models.CallbackFuncString) (notifierUUID string, err error)   // Configure a notifier for a STRING value:
+	AddNotifierFeature(context context.Context, featureKey string, callbackFunc models.CallbackFuncFeature) (notifierUUID string, err error) // Configure a notifier for a FeatureState:
+	DeleteNotifier(featureKey, notifierUUID string) error                                                                                    // Remove a previously configured notifier (by key and UUID, because we support more than one notifier per key)
+	GetBoolean(context context.Context, featureKey string) (bool, error)                                                                     // Retrieve a value (by key) for a BOOLEAN feature
+	GetNumber(context context.Context, featureKey string) (*float64, error)                                                                  // Retrieve a value (by key) for a NUMBER feature
+	GetRawJSON(context context.Context, featureKey string) (*string, error)                                                                  // Retrieve a value (by key) for a JSON feature
+	GetString(context context.Context, featureKey string) (*string, error)                                                                   // Retrieve a value (by key) for a STRING feature
 	// Number "safe" always returns 0 if it cannot find the value, or it is nil
-	Number(featureKey string) float64
+	Number(context context.Context, featureKey string, defaultValue float64) float64
 	// JSON "safe" always returns "{}" if it cannot find the value, or it is nil
-	JSON(featureKey string) string
+	JSON(context context.Context, featureKey string, defaultValue string) string
 	// String "safe" always returns "" if it cannot find the value, or it is nil
-	String(featureKey string) string
+	String(context context.Context, featureKey string, defaultValue string) string
+	Boolean(context context.Context, featureKey string, defaultValue bool) bool
 
-	Properties(featureKey string) map[string]string
+	Properties(context context.Context, featureKey string) map[string]string
 }
 
 // FeatureRepository - contexts don't need to implement these and sources of features don't need them either.
@@ -44,7 +47,7 @@ type FeatureRepository interface {
 	// UsageProvider simply gives us the ability to create Usage structures, and allows the user to overwrite it with their own
 	UsageProvider() usage.ProviderFactory
 	// This is called when a usage event is actually sent
-	EmitUsageEvent(event usage.UsageEvent)
+	EmitUsageEvent(context context.Context, event usage.UsageEvent)
 }
 
 type Context interface {
@@ -53,9 +56,9 @@ type Context interface {
 	Attributes() *models.Context
 	// WithContext - replaces the existing context with this new one
 	WithContext(ctx *models.Context) Context
-	RecordUsageEvent(event usage.UsageEvent)
-	GetContextUsage() usage.UsageEvent
-	RecordNamedUsage(name string, additionalParams usage.ContextRecord)
+	RecordUsageEvent(context context.Context, event usage.UsageEvent)
+	GetContextUsage(context context.Context) usage.UsageEvent
+	RecordNamedUsage(context context.Context, name string, additionalParams usage.ContextRecord)
 }
 
 type InternalRepository interface {
@@ -64,6 +67,6 @@ type InternalRepository interface {
 	ProcessDeleteFeature(feature *models.FeatureState)
 	AddValueInterceptor(valueInterceptor FeatureValueInterceptor)
 	WithContext(context *models.Context) Context
-	IsReady() bool                         // Is the repository ready, does it have its initial state?
-	ReadinessListener(callbackFunc func()) // Configure the SDK with a function to call when we're ready (up and running with some data)
+	IsReady() bool                                                                         // Is the repository ready, does it have its initial state?
+	ReadinessListener(context context.Context, callbackFunc func(context context.Context)) // Configure the SDK with a function to call when we're ready (up and running with some data)
 }

@@ -1,11 +1,13 @@
 package usage
 
 import (
+	"context"
+
 	"github.com/sirupsen/logrus"
 )
 
 // StreamHandler is called whenever a usage event is emitted by the repository.
-type StreamHandler func(event UsageEvent)
+type StreamHandler func(context context.Context, event UsageEvent)
 
 // StreamableRepository is a repository that supports usage-event streaming.
 type StreamableRepository interface {
@@ -41,7 +43,7 @@ func (a *Adapter) Close() {
 	a.repository.RemoveUsageStream(a.handlerID)
 }
 
-func (a *Adapter) dispatch(event UsageEvent) {
+func (a *Adapter) dispatch(context context.Context, event UsageEvent) {
 	for _, p := range a.plugins {
 		go func(p Plugin) {
 			defer func() {
@@ -49,7 +51,7 @@ func (a *Adapter) dispatch(event UsageEvent) {
 					a.logger.WithField("panic", r).Error("usage plugin panicked during Send")
 				}
 			}()
-			p.Send(event)
+			p.Send(context, event)
 		}(p)
 	}
 }

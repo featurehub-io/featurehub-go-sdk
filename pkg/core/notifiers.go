@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 )
@@ -21,13 +23,13 @@ func (n *notifier) getKey() string {
 }
 
 // notify triggers the appropriate callback function for this notifier type:
-func (n *notifier) notify(feature *models.FeatureState) error {
+func (n *notifier) notify(context context.Context, feature *models.FeatureState) error {
 	// ask the feature what type it is
 	featureValueType := feature.Type
 
 	// they registered a callback wanting the entire feature, not a specific type, so give it to them
 	if n.callbackFuncFeature != nil {
-		go n.callbackFuncFeature(feature)
+		go n.callbackFuncFeature(context, feature)
 		return nil
 	}
 
@@ -43,7 +45,7 @@ func (n *notifier) notify(feature *models.FeatureState) error {
 		if !ok {
 			return errors.NewErrInvalidType("Unable to assert as bool")
 		}
-		go n.callbackFuncBoolean(assertedValue)
+		go n.callbackFuncBoolean(context, assertedValue)
 
 	case models.TypeJSON:
 		if n.callbackFuncJSON == nil {
@@ -54,7 +56,7 @@ func (n *notifier) notify(feature *models.FeatureState) error {
 		if !ok {
 			return errors.NewErrInvalidType("Unable to assert as string")
 		}
-		go n.callbackFuncJSON(assertedValue)
+		go n.callbackFuncJSON(context, assertedValue)
 
 	case models.TypeNumber:
 		if n.callbackFuncNumber == nil {
@@ -65,7 +67,7 @@ func (n *notifier) notify(feature *models.FeatureState) error {
 		if !ok {
 			return errors.NewErrInvalidType("Unable to assert as int64")
 		}
-		go n.callbackFuncNumber(assertedValue)
+		go n.callbackFuncNumber(context, assertedValue)
 
 	case models.TypeString:
 		if n.callbackFuncString == nil {
@@ -76,7 +78,7 @@ func (n *notifier) notify(feature *models.FeatureState) error {
 		if !ok {
 			return errors.NewErrInvalidType("Unable to assert as string")
 		}
-		go n.callbackFuncString(assertedValue)
+		go n.callbackFuncString(context, assertedValue)
 
 	default:
 		return errors.NewErrInvalidType(string(featureValueType))
