@@ -157,20 +157,20 @@ A `FeatureValueInterceptor` lets you override the value returned for a feature k
 An interceptor is a function with the signature:
 
 ```go
-type FeatureValueInterceptor func(key string, feature *models.FeatureState) (matched bool, value interface{})
+type FeatureValueInterceptor func(ctx context.Context, key string, feature *models.FeatureState) (value interface{}, matched bool)
 ```
 
-Return `(true, value)` to supply an override, or `(false, nil)` to pass through to the normal evaluation. Interceptors are checked first, before rollout strategies are applied.
+Return `(value, true)` to supply an override, or `(nil, false)` to pass through to the normal evaluation. Note: value is the first return, matched bool is second. Interceptors are checked first, before rollout strategies are applied.
 
 Register an interceptor on the config before calling `Connect()`:
 
 ```go
 fhConfig := client.New(serverAddress, apiKey)
-fhConfig.AddValueInterceptor(func(key string, _ *models.FeatureState) (bool, interface{}) {
+fhConfig.AddValueInterceptor(func(_ context.Context, key string, _ *models.FeatureState) (interface{}, bool) {
     if key == "myFlag" {
         return true, true // always return true for this flag
     }
-    return false, nil
+    return nil, false
 })
 fhConfig.Connect()
 ```
@@ -226,15 +226,15 @@ fhConfig.AddValueInterceptor(interceptors.NewLocalYamlValueInterceptor(logger))
 Any function matching the `FeatureValueInterceptor` signature can be used. The `feature` argument is the current `FeatureState` from the repository (may be `nil` if the key is unknown). The returned `value` must be of the correct Go type for the feature (`bool`, `float64`, or `string`).
 
 ```go
-func myInterceptor(key string, fs *models.FeatureState) (bool, interface{}) {
+func myInterceptor(_ context.Context, key string, fs *models.FeatureState) (interface{}, bool) {
     overrides := map[string]interface{}{
         "darkMode":    true,
         "maxPageSize": float64(50),
     }
     if v, ok := overrides[key]; ok {
-        return true, v
+        return v, true
     }
-    return false, nil
+    return nil, false
 }
 
 fhConfig.AddValueInterceptor(myInterceptor)
@@ -269,6 +269,62 @@ fhConfig.ReadinessListener(ctx, func(ctx context.Context) {
 })
 ```
 
+
+### HTTP Middleware and Context-Free API
+
+For HTTP handlers, the SDK provides a middleware and a context-free interface so you don't need to thread `context.Context` through every feature call.
+
+#### Middleware setup
+
+`core.ContextMiddleware` is standard Go HTTP middleware. It calls `fhConfig.NewContext()` for each request and stores the result in the request context under the `"featurehub"` key:
+
+```go
+import "github.com/featurehub-io/featurehub-go-sdk/pkg/core"
+
+r := mux.NewRouter() // or any http.Handler
+r.Use(core.ContextMiddleware(fhConfig))
+```
+
+Or manually with any router:
+
+```go
+r.Use(func(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        ctx := core.StoreInContext(r.Context(), fhConfig.NewContext())
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+})
+```
+
+#### Using `FeatureHubContext` in handlers
+
+Inside a handler, retrieve the context-free `FeatureHubContext` with `core.NewFromContext`. All feature methods are available without a `context.Context` parameter — the request context is captured automatically:
+
+```go
+func myHandler(w http.ResponseWriter, r *http.Request) {
+    hub, err := core.NewFromContext(r.Context())
+    if err != nil {
+        http.Error(w, "featurehub not configured", http.StatusInternalServerError)
+        return
+    }
+
+    if hub.Boolean("darkMode", false) {
+        // render dark theme
+    }
+
+    pageSize := hub.Number("maxPageSize", 10.0)
+    _ = pageSize
+}
+```
+
+`FeatureHubContext` mirrors the full `interfaces.Context` API but without `context.Context` parameters:
+- `GetBoolean(key)`, `GetNumber(key)`, `GetString(key)`, `GetRawJSON(key)`
+- `Boolean(key, default)`, `Number(key, default)`, `String(key, default)`, `JSON(key, default)`
+- `Properties(key)`, `AllKeys()`
+- `AddNotifierBoolean(key, callback)`, etc.
+- `RecordUsageEvent(event)`, `GetContextUsage()`, `RecordNamedUsage(name, params)`
+- `AsConvertibleString(key)` — returns the feature value as its string representation
+- `WithContext(ctx *models.Context) FeatureHubContext` — returns a new context with updated evaluation attributes
 
 ### Client-side rollout strategies
 Some rollout strategies need to be calculated per-request, which means that we can't rely on the server to do this for us. For this we provide the ability to apply a client context to a feature before using its value:
@@ -336,7 +392,7 @@ A usage plugin is any type that implements the `usage.Plugin` interface:
 ```go
 type Plugin interface {
     DefaultPluginAttributes() usage.ContextRecord // return nil if unused
-    Send(event usage.UsageEvent)
+    Send(ctx context.Context, event usage.UsageEvent) context.Context
 }
 ```
 
@@ -347,10 +403,11 @@ type MyAnalyticsPlugin struct{}
 
 func (p *MyAnalyticsPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
 
-func (p *MyAnalyticsPlugin) Send(event usage.UsageEvent) {
+func (p *MyAnalyticsPlugin) Send(ctx context.Context, event usage.UsageEvent) context.Context {
     record := event.CollectUsageRecord()
     // send record to your analytics backend
     log.Printf("usage event for user=%s: %v", event.UserKey(), record)
+    return ctx
 }
 
 fhConfig := client.New(serverAddress, apiKey)
@@ -528,22 +585,23 @@ func (e *PageViewEvent) CollectUsageRecord() usage.ContextRecord {
 }
 
 // Construct and emit:
-featureValue := usage.NewUsageValue("id", "myFlag", true, models.TypeBoolean)
+featureValue := usage.NewUsageValue("id", "myFlag", "", true, models.TypeBoolean)
 event := &PageViewEvent{
     BaseWithFeature: *usage.NewUsageEventWithFeature(featureValue, nil, "user-123"),
     Page:            "/checkout",
     Campaign:        "summer-sale",
 }
-ctx.RecordUsageEvent(event)
+ctx.RecordUsageEvent(r.Context(), event)
 
 // In your plugin:
-func (p *MyPlugin) Send(e usage.UsageEvent) {
+func (p *MyPlugin) Send(ctx context.Context, e usage.UsageEvent) context.Context {
     if pv, ok := e.(*PageViewEvent); ok {
         // access pv.Page, pv.Campaign directly
     }
     // or use the generic path:
     record := e.CollectUsageRecord()
     _ = record
+    return ctx
 }
 ```
 
@@ -554,7 +612,7 @@ The repository itself exposes a lower-level stream API that bypasses the `Adapte
 ```go
 repo := core.NewClientFeatureHubRepository(logger)
 
-id := repo.RegisterUsageStream(func(event usage.UsageEvent) {
+id := repo.RegisterUsageStream(func(ctx context.Context, event usage.UsageEvent) {
     // called synchronously on the goroutine that evaluated the feature
     fmt.Println("event:", event.UserKey())
 })

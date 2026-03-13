@@ -23,30 +23,41 @@ This is a Go client SDK for FeatureHub, a feature management platform. The SDK c
 ### Package Layout
 
 - **`pkg/core/`**: Primary SDK logic.
-  - `Config` — builder/entry point. `NewConfig(serverAddress, sdkKey, edgeProvider)` returns a `*Config`.
+  - `Config` — builder/entry point. `NewConfig(serverAddress, sdkKey, edgeProvider)` returns a `*Config`. Implements `interfaces.FeatureHubConfig`.
   - `ClientFeatureHubRepository` — local feature cache with notifiers, readiness state, and mutex protection. Also implements `usage.StreamableRepository` (`RegisterUsageStream`, `RemoveUsageStream`, `EmitUsageEvent`).
-  - `ClientWithContext` — bundles a `*models.Context` with a repository for strategy-aware feature evaluation. Emits `BaseWithFeature` usage events on every feature read.
+  - `ClientWithContext` — bundles a `*models.Context` with a repository for strategy-aware feature evaluation. Emits `BaseWithFeature` usage events on every feature read. Implements `interfaces.Context`.
+  - `ContextFeatureHub` — implements `interfaces.FeatureHubContext` by wrapping an `interfaces.Context` retrieved from a Go `context.Context`. All method calls delegate to the wrapped context using the stored Go context as the first argument.
+    - `NewFromContext(ctx context.Context) (*ContextFeatureHub, error)` — extracts the `interfaces.Context` stored under the `"featurehub"` key.
+    - `StoreInContext(ctx context.Context, fhCtx interfaces.Context) context.Context` — stores an `interfaces.Context` into a Go context for later retrieval.
+    - `ContextMiddleware(fhConfig interfaces.FeatureHubConfig) func(http.Handler) http.Handler` — HTTP middleware that calls `fhConfig.NewContext()` and stores it in the request context on every request.
   - `EdgeProviderFunc` — pluggable factory: `func(config *Config, internalRepository interfaces.InternalRepository) (interfaces.EdgeClient, error)`
   - `EnvOrDefaultStr` / `EnvOrDefaultDuration` — helpers for reading config from environment variables.
 - **`pkg/interfaces/`**: Public API contracts.
-  - `RepositoryContext` — feature reads (`GetBoolean`, `GetNumber`, `GetString`, `GetRawJSON`), convenience reads (`Boolean`, `Number`, `String`, `JSON` with default values), notifiers, `Properties`. All methods take `context.Context` as first parameter.
+  - `RepositoryContext` — feature reads (`GetBoolean`, `GetNumber`, `GetString`, `GetRawJSON`), convenience reads (`Boolean`, `Number`, `String`, `JSON` with default values), notifiers, `Properties`, `AllKeys`. All methods take `context.Context` as first parameter.
   - `FeatureRepository` — internal read API used by `ClientWithContext`: `GetFeature`, `GetInternalString`, `GetInternalNumber`, `GetInternalBoolean`, `GetFeatures`, `UsageProvider`, `EmitUsageEvent(context.Context, UsageEvent)`.
-  - `Context` — extends `RepositoryContext` with `Attributes()`, `WithContext()`, `RecordUsageEvent(ctx, event)`, `GetContextUsage(ctx)`, `RecordNamedUsage(ctx, name, params)`.
+  - `Context` — extends `RepositoryContext` with `Attributes()`, `WithContext()`, `RecordUsageEvent(ctx, event)`, `GetContextUsage(ctx)`, `RecordNamedUsage(ctx, name, params)`, `AsConvertibleString(ctx, key)`.
+  - `FeatureHubContext` — mirrors `Context` but omits `context.Context` from every method. Implemented by `ContextFeatureHub` for use in HTTP handlers and other call sites that hold their own `context.Context`.
+  - `FeatureHubConfig` — interface for `*Config`, covering the full lifecycle: `Connect()`, `Build()`, `Close()`, `NewContext()`, `WithContext()`, `IsReady()`, `ReadinessListener()`, `EdgeType()`, `Validate()`, `EnvironmentID()`, `ClientEvaluated()`, `FeaturesURL()`, `PollingFeaturesURL()`, `Timeout()`, and fluent builder methods (`WithSDKKey`, `WithLogLevel`, `WithWaitForData`, `WithFatalErrorHandler`, `RegisterUsagePlugin`, `AddValueInterceptor`). Fluent methods and `Connect`/`Build` return `FeatureHubConfig`; `NewContext`/`WithContext` return `Context`.
   - `InternalRepository` — write side: `ProcessFeature`, `ProcessFeatures`, `ProcessDeleteFeature`, `IsReady`, `AddValueInterceptor`, `WithContext`, `ReadinessListener(context.Context, func(context.Context))`.
   - `EdgeClient` — `Connect()`, `Poll()`, `ContextChange()`, `Close()`.
-  - `FeatureValueInterceptor` — `func(key string, feature *models.FeatureState) (matched bool, value interface{})`.
+  - `FeatureValueInterceptor` — `func(ctx context.Context, key string, feature *models.FeatureState) (value interface{}, matched bool)`. Note: value is returned first, matched bool second.
   - `ErrorFunc` — `func(error, string, map[string]interface{})` for fatal async errors.
-- **`pkg/models/`**: Domain objects — `FeatureState` (including `Properties map[string]string` field serialised as `"fp"`), `FeatureEnvironmentCollection`, `Context` (with `GenerateHeader()` for sorted URL-encoded header strings), strategy types, SSE event types, callback func types.
+- **`pkg/models/`**: Domain objects.
+  - `FeatureState` (including `Properties map[string]string` field serialised as `"fp"`), `FeatureEnvironmentCollection`, `Context` (with `GenerateHeader()` for sorted URL-encoded header strings), strategy types, SSE event types, callback func types.
+  - `EdgeType string` — edge connection strategy type. Constants: `EdgeStreaming`, `EdgeActiveRest`, `EdgePassiveRest`.
+  - `FeatureValueType string` — feature value type. Constants: `TypeBoolean`, `TypeString`, `TypeNumber`, `TypeJSON`.
+  - `ConvertValue(typeName FeatureValueType, raw interface{}) (interface{}, error)` — normalises raw values (bool, int, int64, float64, string) to the correct Go type for the given feature type. Recognises `"on"`/`"yes"`/`"y"`/`"t"` as boolean true and their inverses as false.
+  - `ConvertToString(typeName FeatureValueType, raw interface{}) (string, error)` — converts a raw value to the string representation used in usage events (`"t"`/`"f"` for booleans, `%v` for numbers, passthrough for strings/JSON).
   - Callback types all take `context.Context` as first parameter: `CallbackFuncBoolean func(context.Context, bool)`, `CallbackFuncString func(context.Context, string)`, `CallbackFuncNumber func(context.Context, float64)`, `CallbackFuncJSON func(context.Context, string)`, `CallbackFuncFeature func(context.Context, *FeatureState)`.
 - **`pkg/streaming-client/`**: SSE-based `EdgeClient` implementation. `StreamingClient` manages the SSE connection and delegates all feature storage to a `ClientFeatureHubRepository`. Has a `Close()` method that sets `stopped=true`, preventing reconnection.
 - **`pkg/polling-client/`**: HTTP polling `EdgeClient` implementation. `FeatureHubPollingClient` supports active (timer-based) and passive (cache-expiry-based) modes. `PollingBase` handles the low-level HTTP GET mechanics (etag, cache-control, SHA-256 context header hashing, concurrent-caller coalescing). `Poll()` and `ContextChange()` dispatch asynchronously.
 - **`pkg/strategies/`**: Client-side rollout strategy matchers for boolean, number, string, semver, date, datetime, and IP address attribute types.
 - **`pkg/errors/`**: Typed errors: `ErrBadConfig`, `ErrFeatureNotFound`, `ErrInvalidType`, `ErrNotifierNotFound`, `ErrFromAPI`, `ErrFeatureIsWrongType`, `ErrInvalidNotifierCallback`.
 - **`pkg/interceptors/`**: Built-in `FeatureValueInterceptor` implementations.
-  - `LocalYamlValueInterceptor` — reads feature overrides from a YAML file specified by `FEATUREHUB_OVERRIDES` env var. Useful for local development and testing.
+  - `LocalYamlValueInterceptor` — reads feature overrides from a YAML file specified by `FEATUREHUB_OVERRIDES` env var (defaults to `featurehub-overrides.yaml`). YAML is a list of `{key, type, value}` entries. Values are converted via `models.ConvertValue` at initialisation time.
 - **`pkg/usage/`**: Usage/analytics subsystem.
   - `UsageEvent` interface + concrete types: `BaseWithFeature`, `BaseFeaturesCollection`, `BaseCollectionContext`, `UsageNamedFeaturesCollection`.
-  - `Plugin` interface: `DefaultPluginAttributes() ContextRecord`, `Send(context.Context, UsageEvent)`.
+  - `Plugin` interface: `DefaultPluginAttributes() ContextRecord`, `Send(context.Context, UsageEvent) context.Context`.
   - `StreamHandler` — `func(context.Context, UsageEvent)` — called when a usage event is emitted by the repository.
   - `Adapter` — subscribes to a `StreamableRepository` and fans events out to registered `Plugin`s. Each plugin's `Send` call runs in its own goroutine (panics are caught and logged).
   - `ProviderFactory` / `Provider` — factory for constructing usage event objects; injectable via `ClientFeatureHubRepository.UsageProvider()`.
@@ -56,19 +67,28 @@ This is a Go client SDK for FeatureHub, a feature management platform. The SDK c
 ### Connection Flow
 
 ```
-client.New(serverAddress, sdkKey)           // root package wires all edge types
+client.New(serverAddress, sdkKey)           // root package wires all edge types; returns *core.Config
   → core.NewConfig(..., edgeProviderFunc)
   → .Streaming()  /  .ActiveRest(interval)  /  .PassiveRest(interval)
   → .WithSDKKey(key)                         // optional: add extra SDK keys for multi-env polling
   → .WithLogLevel() / .WithWaitForData() / .WithFatalErrorHandler()
   → .RegisterUsagePlugin(plugin)            // optional: attach usage analytics
-  → .Connect()
+  → .Connect() → (interfaces.FeatureHubConfig, error)
       → EdgeProviderFunc → StreamingClient | FeatureHubPollingClient
       → client.Connect()
-  → .Build(context)                         // optional: server-evaluated mode — connects + sends header
-  → .NewContext() → *ClientWithContext      (strategy-aware reads + usage emission)
-  → .Repository() → interfaces.RepositoryContext (context-free reads)
+  → .Build(context) → (interfaces.FeatureHubConfig, error)
+                                            // optional: server-evaluated mode — connects + sends header
+  → .NewContext() → interfaces.Context      (strategy-aware reads + usage emission)
+  → .WithContext(ctx) → interfaces.Context  (attach a pre-built models.Context)
   → .Close()                                // shut down the edge client
+```
+
+HTTP middleware pattern:
+
+```
+core.ContextMiddleware(fhConfig)            // wraps each request: stores NewContext() in r.Context()
+core.NewFromContext(r.Context())            // retrieves ContextFeatureHub (interfaces.FeatureHubContext)
+  → hub.GetBoolean("myFlag")               // no context.Context param needed
 ```
 
 `NewConfig` reads environment variables on startup to set a default edge type:
@@ -87,15 +107,17 @@ The `Config` manages a single `*ClientFeatureHubRepository` by default. External
 
 ### Context Propagation
 
-All feature-read methods (`GetBoolean`, `GetNumber`, `GetString`, `GetRawJSON`), convenience methods (`Boolean`, `Number`, `String`, `JSON`), `Properties`, notifier registration (`AddNotifier*`), `ReadinessListener`, and usage emission (`EmitUsageEvent`, `RecordUsageEvent`, `GetContextUsage`, `RecordNamedUsage`) take `context.Context` as their first parameter.
+All feature-read methods (`GetBoolean`, `GetNumber`, `GetString`, `GetRawJSON`), convenience methods (`Boolean`, `Number`, `String`, `JSON`), `Properties`, `AllKeys`, notifier registration (`AddNotifier*`), `ReadinessListener`, and usage emission (`EmitUsageEvent`, `RecordUsageEvent`, `GetContextUsage`, `RecordNamedUsage`) take `context.Context` as their first parameter.
 
-The context flows through to usage plugin `Send(context.Context, UsageEvent)` and `StreamHandler func(context.Context, UsageEvent)` calls, enabling tracing and cancellation propagation.
+The context flows through to usage plugin `Send(context.Context, UsageEvent) context.Context` and `StreamHandler func(context.Context, UsageEvent)` calls, enabling tracing and cancellation propagation.
+
+`ContextFeatureHub` / `FeatureHubContext` provide a context-free façade where the Go context is captured once (at `NewFromContext` time) and reused for every delegated call.
 
 ### Usage System
 
 `ClientFeatureHubRepository` implements `usage.StreamableRepository`. Every feature read through `ClientWithContext` emits a `BaseWithFeature` event via `EmitUsageEvent(ctx, event)`.
 
-`Config.SetRepository` creates a `usage.Adapter` and registers a `passiveRestPollPlugin` that calls `client.Poll()` on every usage event when `EdgeType() == EdgePassiveRest`. This keeps the feature cache fresh in passive-REST mode without requiring the host to manually poll.
+`Config.SetRepository` creates a `usage.Adapter` and registers a `passiveRestPollPlugin` that calls `client.Poll()` on every usage event when `EdgeType() == models.EdgePassiveRest`. This keeps the feature cache fresh in passive-REST mode without requiring the host to manually poll.
 
 Additional plugins are registered with `Config.RegisterUsagePlugin(plugin)`. Each plugin's `Send` runs in its own goroutine; panics are caught and logged.
 
@@ -108,16 +130,14 @@ config.RegisterUsagePlugin(myAnalyticsPlugin)
 Interceptors are functions registered with `Config.AddValueInterceptor(fn)` or `repo.AddValueInterceptor(fn)` that can override feature values before evaluation. The interceptor signature is:
 
 ```go
-type FeatureValueInterceptor func(key string, feature *models.FeatureState) (matched bool, value interface{})
+type FeatureValueInterceptor func(ctx context.Context, key string, feature *models.FeatureState) (value interface{}, matched bool)
 ```
 
-The built-in `LocalYamlValueInterceptor` (in `pkg/interceptors/`) reads from a YAML file at the path specified by `FEATUREHUB_OVERRIDES`. The file maps feature keys to override values:
+**Note:** the return order is `(value, matched)` — value first, bool second.
 
-```yaml
-myBooleanFlag: true
-myStringFlag: "override-value"
-myNumberFlag: 42
-```
+Return `(value, true)` to supply an override, or `(nil, false)` to pass through. Interceptors are checked before rollout strategies; first match wins.
+
+The built-in `LocalYamlValueInterceptor` (in `pkg/interceptors/`) reads from a YAML file at the path specified by `FEATUREHUB_OVERRIDES`. Values are converted via `models.ConvertValue` at startup.
 
 Interceptors that match against a key with a nil feature state (unknown key) do **not** emit a usage event.
 
@@ -144,12 +164,17 @@ config.WithSDKKey("default/env-2/key-2").WithSDKKey("default/env-3/key-3")
 
 ### Build Method (Server-Evaluated Mode)
 
-`Config.Build(context *models.Context) (*Config, error)` is the entry point for server-evaluated mode:
+`Config.Build(context *models.Context) (interfaces.FeatureHubConfig, error)` is the entry point for server-evaluated mode:
 - If the SDK key is client-evaluated (contains `"*"`), returns immediately without connecting.
 - If no edge client exists, creates one via the `EdgeProviderFunc` and calls `Connect()`.
 - Calls `ContextChange(header)` with the header generated from the provided `*models.Context`.
 
 ### Edge Types
+
+Edge types are defined in `pkg/models` as `models.EdgeType`:
+- `models.EdgeStreaming` — SSE streaming (default)
+- `models.EdgeActiveRest` — active REST polling on a timer
+- `models.EdgePassiveRest` — passive REST polling on demand
 
 **SSE streaming** (`pkg/streaming-client`): long-lived SSE connection. Events dispatched to `InternalRepository` as they arrive. Status 236 / `edge.stale` closes the connection. `Close()` sets `stopped=true`; a stopped client will refuse to reconnect.
 
@@ -219,16 +244,16 @@ props := ctx.Properties(ctx, featureKey)    // delegates to the underlying repos
 
 ### EdgeType
 
-`Config.EdgeType()` returns the currently configured edge type (`EdgeStreaming`, `EdgeActiveRest`, or `EdgePassiveRest`). Calling `Streaming()`, `ActiveRest()`, or `PassiveRest()` closes any existing edge client and updates the type.
+`Config.EdgeType()` returns the currently configured `models.EdgeType`. Calling `Streaming()`, `ActiveRest()`, or `PassiveRest()` closes any existing edge client and updates the type. The type constants (`models.EdgeStreaming`, `models.EdgeActiveRest`, `models.EdgePassiveRest`) live in `pkg/models`.
 
 ### Config Lifecycle
 
 ```go
-config := core.NewConfig(server, key, edgeProvider)
-config.ActiveRest(30 * time.Second)
-config, err := config.Connect()   // blocking if WithWaitForData set
-// ... use config ...
-config.Close()                    // shuts down edge client and nils the reference
+config := core.NewConfig(server, key, edgeProvider)  // returns *core.Config
+config.ActiveRest(30 * time.Second)                   // still returns *Config (not in interface)
+fhCfg, err := config.Connect()                        // returns (interfaces.FeatureHubConfig, error)
+// ... use fhCfg ...
+fhCfg.Close()                                          // shuts down edge client and nils the reference
 ```
 
 `Config.Close()` is idempotent — safe to call when no client is connected.
