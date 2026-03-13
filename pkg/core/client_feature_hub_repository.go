@@ -109,6 +109,20 @@ func (r *ClientFeatureHubRepository) AddValueInterceptor(valueInterceptor interf
 	r.valueInterceptors = append(r.valueInterceptors, valueInterceptor)
 }
 
+func (r *ClientFeatureHubRepository) AllKeys() []string {
+	r.featuresMutex.Lock()
+
+	defer r.featuresMutex.Unlock()
+
+	keys := make([]string, 0, len(r.features))
+
+	for k := range r.features {
+		keys = append(keys, k)
+	}
+
+	return keys
+}
+
 // GetFeature searches for a feature by key:
 func (r *ClientFeatureHubRepository) GetFeature(context context.Context, key string) (feature *models.FeatureState, matched bool, value interface{}, err error) {
 	r.featuresMutex.Lock()

@@ -49,14 +49,16 @@ func TestConfig(t *testing.T) {
 		return nil, errors.NewErrBadConfig("no edge required in this test")
 	}
 	// Make sure that our fluent API for NewConfig works as expected:
-	newConfig := NewConfig("myserver", "mySDKKey", edgeProvider).WithLogLevel(logrus.WarnLevel).WithWaitForData(time.Second)
+	newConfig := NewConfig("myserver", "mySDKKey", edgeProvider)
+	newConfig.WithLogLevel(logrus.WarnLevel)
+	newConfig.WithWaitForData(time.Second)
 	assert.Equal(t, "myserver", newConfig.ServerAddress)
 	assert.Equal(t, "mySDKKey", newConfig.SDKKey)
 	assert.Equal(t, logrus.WarnLevel, newConfig.LogLevel)
 	assert.Equal(t, time.Second, *newConfig.WaitForData)
 
 	// Try to connect (it will of course fail):
-	newConfig, err := newConfig.Connect()
+	_, err := newConfig.Connect()
 	assert.Error(t, err)
 
 	var repo = NewClientFeatureHubRepository(newConfig.Logger)
@@ -64,7 +66,7 @@ func TestConfig(t *testing.T) {
 	newConfig.SetRepository(repo)
 
 	// Get a context, check that it inherited the correct attributes:
-	newContext := newConfig.NewContext()
+	newContext := newConfig.NewContext().(*ClientWithContext)
 	assert.Equal(t, newConfig.repository, newContext.repository)
 	assert.NotNil(t, newContext.Custom)
 
@@ -73,7 +75,7 @@ func TestConfig(t *testing.T) {
 		Userkey: "customContextKey",
 	}
 
-	withContext := newConfig.WithContext(customContext)
+	withContext := newConfig.WithContext(customContext).(*ClientWithContext)
 	assert.Equal(t, newConfig.repository, withContext.repository)
 	assert.Equal(t, "customContextKey", withContext.Userkey)
 }
@@ -249,7 +251,7 @@ func TestBuildClientEvaluatedReturnsWithoutConnecting(t *testing.T) {
 	result, err := config.Build(ctx)
 
 	require.NoError(t, err)
-	assert.Same(t, config, result)
+	assert.Same(t, config, result.(*Config))
 	assert.Nil(t, config.client, "client should not be created for client-evaluated keys")
 	assert.Empty(t, mockClient.contextChangeArgs)
 }
@@ -262,7 +264,7 @@ func TestBuildServerEvaluatedNoClientConnectsAndSendsHeader(t *testing.T) {
 	result, err := config.Build(ctx)
 
 	require.NoError(t, err)
-	assert.Same(t, config, result)
+	assert.Same(t, config, result.(*Config))
 	assert.Equal(t, 1, mockClient.connectCalls)
 	require.Len(t, mockClient.contextChangeArgs, 1)
 	assert.Equal(t, ctx.GenerateHeader(), mockClient.contextChangeArgs[0])
@@ -277,7 +279,7 @@ func TestBuildServerEvaluatedExistingClientCallsContextChange(t *testing.T) {
 	result, err := config.Build(ctx)
 
 	require.NoError(t, err)
-	assert.Same(t, config, result)
+	assert.Same(t, config, result.(*Config))
 	assert.Equal(t, 0, mockClient.connectCalls, "Connect should not be called again when client already exists")
 	require.Len(t, mockClient.contextChangeArgs, 1)
 	assert.Equal(t, ctx.GenerateHeader(), mockClient.contextChangeArgs[0])

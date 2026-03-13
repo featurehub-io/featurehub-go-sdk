@@ -55,7 +55,7 @@ func NewPollingClient(config *core.Config, repository interfaces.InternalReposit
 		return nil, err
 	}
 
-	active := config.EdgeType() != core.EdgePassiveRest
+	active := config.EdgeType() != models.EdgePassiveRest
 
 	c := &FeatureHubPollingClient{
 		config:                  config,

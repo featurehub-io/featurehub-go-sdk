@@ -2,9 +2,11 @@ package interfaces
 
 import (
 	"context"
+	"time"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/usage"
+	"github.com/sirupsen/logrus"
 )
 
 // RepositoryContext - this is the main interface used for requesting features, and it
@@ -30,6 +32,9 @@ type RepositoryContext interface {
 	Boolean(context context.Context, featureKey string, defaultValue bool) bool
 
 	Properties(context context.Context, featureKey string) map[string]string
+
+	// AllKeys returns all of the keys in the repository at this moment
+	AllKeys() []string
 }
 
 // FeatureRepository - contexts don't need to implement these and sources of features don't need them either.
@@ -59,6 +64,69 @@ type Context interface {
 	RecordUsageEvent(context context.Context, event usage.UsageEvent)
 	GetContextUsage(context context.Context) usage.UsageEvent
 	RecordNamedUsage(context context.Context, name string, additionalParams usage.ContextRecord)
+	AsConvertibleString(context context.Context, key string) (string, error)
+}
+
+// FeatureHubContext mirrors Context but omits the context.Context parameter from every method,
+// providing a simpler API for callers that do not need context propagation.
+type FeatureHubContext interface {
+	AddNotifierBoolean(featureKey string, callbackFunc models.CallbackFuncBoolean) (notifierUUID string, err error)
+	AddNotifierJSON(featureKey string, callbackFunc models.CallbackFuncJSON) (notifierUUID string, err error)
+	AddNotifierNumber(featureKey string, callbackFunc models.CallbackFuncNumber) (notifierUUID string, err error)
+	AddNotifierString(featureKey string, callbackFunc models.CallbackFuncString) (notifierUUID string, err error)
+	AddNotifierFeature(featureKey string, callbackFunc models.CallbackFuncFeature) (notifierUUID string, err error)
+	DeleteNotifier(featureKey, notifierUUID string) error
+	GetBoolean(featureKey string) (bool, error)
+	GetNumber(featureKey string) (*float64, error)
+	GetRawJSON(featureKey string) (*string, error)
+	GetString(featureKey string) (*string, error)
+	Number(featureKey string, defaultValue float64) float64
+	JSON(featureKey string, defaultValue string) string
+	String(featureKey string, defaultValue string) string
+	Boolean(featureKey string, defaultValue bool) bool
+	Properties(featureKey string) map[string]string
+	AllKeys() []string
+	Attributes() *models.Context
+	WithContext(ctx *models.Context) FeatureHubContext
+	RecordUsageEvent(event usage.UsageEvent)
+	GetContextUsage() usage.UsageEvent
+	RecordNamedUsage(name string, additionalParams usage.ContextRecord)
+	AsConvertibleString(key string) (string, error)
+}
+
+// FeatureHubConfig is the interface for the core SDK configuration and lifecycle. It covers
+// connection management, feature context creation, and configuration options, allowing
+// *core.Config to be substituted with a test double or alternative implementation.
+type FeatureHubConfig interface {
+	// Connection lifecycle
+	Connect() (FeatureHubConfig, error)
+	Build(ctx *models.Context) (FeatureHubConfig, error)
+	Close()
+
+	// Feature context creation
+	NewContext() Context
+	WithContext(ctx *models.Context) Context
+
+	// Readiness
+	IsReady() bool
+	ReadinessListener(context context.Context, callbackFunc func(context context.Context))
+
+	// Validation and metadata
+	Validate() error
+	EnvironmentID() string
+	ClientEvaluated() bool
+	FeaturesURL() string
+	PollingFeaturesURL() string
+	Timeout() time.Duration
+	EdgeType() models.EdgeType
+
+	// Configuration (fluent)
+	WithSDKKey(key string) FeatureHubConfig
+	WithLogLevel(logLevel logrus.Level) FeatureHubConfig
+	WithWaitForData(value time.Duration) FeatureHubConfig
+	WithFatalErrorHandler(fatalErrorFunc ErrorFunc) FeatureHubConfig
+	RegisterUsagePlugin(plugin usage.Plugin) FeatureHubConfig
+	AddValueInterceptor(valueInterceptor FeatureValueInterceptor)
 }
 
 type InternalRepository interface {

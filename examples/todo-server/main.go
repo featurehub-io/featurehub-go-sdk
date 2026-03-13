@@ -13,6 +13,7 @@ import (
 
 	client "github.com/featurehub-io/featurehub-go-sdk"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/core"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
@@ -31,7 +32,7 @@ var (
 	storeMu sync.RWMutex
 )
 
-var fhConfig *core.Config
+var fhConfig interfaces.FeatureHubConfig
 
 func main() {
 	port := os.Getenv("PORT")
@@ -60,8 +61,16 @@ func main() {
 	}
 
 	r := mux.NewRouter()
+
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(core.StoreInContext(r.Context(), fhConfig.NewContext())))
+		})
+	})
+
 	r.Use(loggingMiddleware)
 	r.Use(corsMiddleware)
+	r.Use(core.ContextMiddleware(fhConfig))
 
 	r.HandleFunc("/name/{name}", nameHandler).Methods(http.MethodGet)
 	r.HandleFunc("/foo/{someId}", fooHandler).Methods(http.MethodGet)
@@ -72,7 +81,7 @@ func main() {
 	r.HandleFunc("/todo/{user}/{id}/resolve", resolveHandler).Methods(http.MethodPut)
 	r.HandleFunc("/todo/{user}/{id}", deleteTodoHandler).Methods(http.MethodDelete)
 
-	log.Printf("Listening on :%s using %s with an interval of %s", port, fhConfig.EdgeType(), fhConfig.Timeout())
+	log.Printf("Listening on :%s using %s with an interval of %s", port, fhConfig.(*core.Config).EdgeType(), fhConfig.Timeout())
 	log.Fatal(http.ListenAndServe(":"+port, r))
 }
 
@@ -235,7 +244,7 @@ func todoList(user string) []Todo {
 //   - FEATURE_NUMBER: if set, appends the number value to "pay" todos.
 //   - FEATURE_JSON:   if set, appends json["foo"] to "find" todos.
 //   - FEATURE_TITLE_TO_UPPERCASE: if enabled, uppercases the final title.
-func processTitle(ctx *core.ClientWithContext, title string) string {
+func processTitle(ctx interfaces.Context, title string) string {
 	newTitle := title
 
 	if str, err := ctx.GetString(context.TODO(), "FEATURE_STRING"); err == nil && str != nil && title == "buy" {

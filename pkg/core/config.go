@@ -14,15 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const (
-	defaultLogLevel = logrus.InfoLevel
-
-	EdgeActiveRest  = "active-rest"
-	EdgePassiveRest = "passive-rest"
-	EdgeStreaming   = "streaming"
-)
-
-type EdgeType string
+const defaultLogLevel = logrus.InfoLevel
 
 // Config defines parameters for the repository:
 type Config struct {
@@ -36,7 +28,7 @@ type Config struct {
 	usageAdapter      *usage.Adapter
 	EdgeProvider      EdgeProviderFunc
 	fatalErrorHandler *interfaces.ErrorFunc // A user-provided handler func for fatal asynchronous errors
-	requestedEdgeType EdgeType
+	requestedEdgeType models.EdgeType
 	timeout           time.Duration // timeout if using polling
 	client            interfaces.EdgeClient
 }
@@ -48,16 +40,16 @@ func NewConfig(serverAddress, sdkKey string, edgeProvider EdgeProviderFunc) *Con
 	logger.SetLevel(defaultLogLevel)
 
 	// inspect environment variables to see if we are being signalled about what client to use
-	var defaultEdge EdgeType = EdgeStreaming
+	var defaultEdge models.EdgeType = models.EdgeStreaming
 	var timeout time.Duration = 0
 
 	if os.Getenv("FEATUREHUB_POLLING_INTERVAL") != "" {
-		defaultEdge = EdgeActiveRest
+		defaultEdge = models.EdgeActiveRest
 		timeout = EnvOrDefaultDuration("FEATUREHUB_POLLING_INTERVAL", 3*time.Minute)
 	}
 
 	if os.Getenv("FEATUREHUB_POLLING_PASSIVE") != "" {
-		defaultEdge = EdgePassiveRest
+		defaultEdge = models.EdgePassiveRest
 	}
 
 	return &Config{
@@ -79,7 +71,7 @@ type passiveRestPollPlugin struct {
 func (p *passiveRestPollPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
 
 func (p *passiveRestPollPlugin) Send(ctx context.Context, _ usage.UsageEvent) context.Context {
-	if p.config.client != nil && p.config.requestedEdgeType == EdgePassiveRest {
+	if p.config.client != nil && p.config.requestedEdgeType == models.EdgePassiveRest {
 		p.config.client.Poll() //nolint:errcheck
 	}
 	return ctx
@@ -88,7 +80,7 @@ func (p *passiveRestPollPlugin) Send(ctx context.Context, _ usage.UsageEvent) co
 // Build - this is only relevant for Server Evaluated functionality. It pairs a single context with a single edge connection.
 // you can have multiple connections ONLY if you have multiple instances of Config. All state is being evaluated on the server,
 // no strategies are being sent back to the client.
-func (c *Config) Build(context *models.Context) (*Config, error) {
+func (c *Config) Build(context *models.Context) (interfaces.FeatureHubConfig, error) {
 	if c.ClientEvaluated() {
 		return c, nil
 	}
@@ -126,26 +118,26 @@ func (c *Config) Close() {
 
 func (c *Config) PassiveRest(interval time.Duration) *Config {
 	c.closeEdge()
-	c.requestedEdgeType = EdgePassiveRest
+	c.requestedEdgeType = models.EdgePassiveRest
 	c.timeout = interval
 	return c
 }
 
 func (c *Config) ActiveRest(timeout time.Duration) *Config {
 	c.closeEdge()
-	c.requestedEdgeType = EdgeActiveRest
+	c.requestedEdgeType = models.EdgeActiveRest
 	c.timeout = timeout
 	return c
 }
 
 func (c *Config) Streaming() *Config {
 	c.closeEdge()
-	c.requestedEdgeType = EdgeStreaming
+	c.requestedEdgeType = models.EdgeStreaming
 	c.timeout = time.Millisecond * 0
 	return c
 }
 
-func (c *Config) EdgeType() EdgeType {
+func (c *Config) EdgeType() models.EdgeType {
 	return c.requestedEdgeType
 }
 
@@ -161,7 +153,7 @@ func (c *Config) ReadinessListener(context context.Context, callbackFunc func(co
 	c.checkRepository().ReadinessListener(context, callbackFunc)
 }
 
-func (c *Config) connect(header *string) (*Config, error) {
+func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
 	provider, err := c.EdgeProvider(c, c.checkRepository())
 
 	if err != nil {
@@ -180,12 +172,12 @@ func (c *Config) connect(header *string) (*Config, error) {
 }
 
 // Connect prepares a repository and connects to the configured FH server:
-func (c *Config) Connect() (*Config, error) {
+func (c *Config) Connect() (interfaces.FeatureHubConfig, error) {
 	return c.connect(nil)
 }
 
 // NewContext returns a ClientWithContext, with default context values:
-func (c *Config) NewContext() *ClientWithContext {
+func (c *Config) NewContext() interfaces.Context {
 	return &ClientWithContext{
 		Context: &models.Context{
 			Custom: make(map[string]interface{}),
@@ -195,7 +187,7 @@ func (c *Config) NewContext() *ClientWithContext {
 	}
 }
 
-func (c *Config) RegisterUsagePlugin(plugin usage.Plugin) *Config {
+func (c *Config) RegisterUsagePlugin(plugin usage.Plugin) interfaces.FeatureHubConfig {
 	c.checkRepository()
 
 	c.usageAdapter.RegisterPlugin(plugin)
@@ -240,7 +232,7 @@ func (c *Config) Validate() error {
 }
 
 // WithContext Create a new context with passed context
-func (c *Config) WithContext(context *models.Context) *ClientWithContext {
+func (c *Config) WithContext(context *models.Context) interfaces.Context {
 	return &ClientWithContext{
 		Context:           context,
 		repository:        c.repository,
@@ -249,19 +241,19 @@ func (c *Config) WithContext(context *models.Context) *ClientWithContext {
 }
 
 // WithFatalErrorHandler configures an error handler which will be called for asynchronous fatal errors:
-func (c *Config) WithFatalErrorHandler(fatalErrorFunc interfaces.ErrorFunc) *Config {
+func (c *Config) WithFatalErrorHandler(fatalErrorFunc interfaces.ErrorFunc) interfaces.FeatureHubConfig {
 	c.fatalErrorHandler = &fatalErrorFunc
 	return c
 }
 
 // WithLogLevel adds a logLevel to the config:
-func (c *Config) WithLogLevel(logLevel logrus.Level) *Config {
+func (c *Config) WithLogLevel(logLevel logrus.Level) interfaces.FeatureHubConfig {
 	c.LogLevel = logLevel
 	return c
 }
 
 // WithWaitForData adds a WaitForData config:
-func (c *Config) WithWaitForData(value time.Duration) *Config {
+func (c *Config) WithWaitForData(value time.Duration) interfaces.FeatureHubConfig {
 	c.WaitForData = &value
 	return c
 }
@@ -299,7 +291,7 @@ func (c *Config) FeaturesURL() string {
 
 // WithSDKKey adds an additional SDK key to the config. Additional keys are appended
 // as extra apiKey= query parameters in polling requests, enabling multi-environment polling.
-func (c *Config) WithSDKKey(key string) *Config {
+func (c *Config) WithSDKKey(key string) interfaces.FeatureHubConfig {
 	c.additionalSDKKeys = append(c.additionalSDKKeys, key)
 	return c
 }

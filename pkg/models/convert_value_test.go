@@ -71,3 +71,61 @@ func TestConvertValueUnknownTypeReturnsError(t *testing.T) {
 	_, err := ConvertValue(FeatureValueType("NONSENSE"), "value")
 	assert.Error(t, err)
 }
+
+// --- ConvertToString ---
+
+func TestConvertToStringBooleanTrue(t *testing.T) {
+	s, err := ConvertToString(TypeBoolean, true)
+	require.NoError(t, err)
+	assert.Equal(t, "t", s)
+}
+
+func TestConvertToStringBooleanFalse(t *testing.T) {
+	s, err := ConvertToString(TypeBoolean, false)
+	require.NoError(t, err)
+	assert.Equal(t, "f", s)
+}
+
+func TestConvertToStringBooleanFromString(t *testing.T) {
+	s, err := ConvertToString(TypeBoolean, "on")
+	require.NoError(t, err)
+	assert.Equal(t, "t", s)
+
+	s, err = ConvertToString(TypeBoolean, "off")
+	require.NoError(t, err)
+	assert.Equal(t, "f", s)
+}
+
+func TestConvertToStringNumber(t *testing.T) {
+	s, err := ConvertToString(TypeNumber, float64(42))
+	require.NoError(t, err)
+	assert.Equal(t, "42", s)
+}
+
+func TestConvertToStringNumberFloat(t *testing.T) {
+	s, err := ConvertToString(TypeNumber, 3.14)
+	require.NoError(t, err)
+	assert.Equal(t, "3.14", s)
+}
+
+func TestConvertToStringString(t *testing.T) {
+	s, err := ConvertToString(TypeString, "hello")
+	require.NoError(t, err)
+	assert.Equal(t, "hello", s)
+}
+
+func TestConvertToStringJSON(t *testing.T) {
+	s, err := ConvertToString(TypeJSON, `{"a":1}`)
+	require.NoError(t, err)
+	assert.Equal(t, `{"a":1}`, s)
+}
+
+func TestConvertToStringUnknownTypeReturnsError(t *testing.T) {
+	_, err := ConvertToString(FeatureValueType("NONSENSE"), "value")
+	assert.Error(t, err)
+}
+
+func TestConvertToStringInvalidValueReturnsError(t *testing.T) {
+	_, err := ConvertToString(TypeBoolean, "notabool")
+	assert.Error(t, err)
+}

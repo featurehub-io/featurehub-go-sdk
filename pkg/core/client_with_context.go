@@ -22,9 +22,23 @@ func (cc *ClientWithContext) Attributes() *models.Context {
 	return cc.Context
 }
 
+func (cc *ClientWithContext) AllKeys() []string {
+	return cc.repository.AllKeys()
+}
+
 // Repository provides access to the repository:
 func (cc *ClientWithContext) Repository() interfaces.RepositoryContext {
 	return cc.repository
+}
+
+func (cc *ClientWithContext) AsConvertableString(context context.Context, key string) (string, error) {
+	fs, _, valRaw, err := cc.featureRepository.GetFeature(context, key)
+
+	if err != nil {
+		return "", err
+	}
+
+	return models.ConvertToString(fs.Type, valRaw)
 }
 
 func (cc *ClientWithContext) Boolean(context context.Context, featureKey string, defaultValue bool) bool {
@@ -277,6 +291,14 @@ func (cc *ClientWithContext) GetContextUsage(context context.Context) usage.Usag
 
 func (cc *ClientWithContext) RecordNamedUsage(context context.Context, name string, additionalParams usage.ContextRecord) {
 	cc.RecordUsageEvent(context, cc.fillEvent(context, cc.featureRepository.UsageProvider().NewNamedUsageCollection(name, additionalParams)))
+}
+
+func (cc *ClientWithContext) AsConvertibleString(context context.Context, key string) (string, error) {
+	fs, _, value, err := cc.featureRepository.GetFeature(context, key)
+	if err != nil {
+		return "", err
+	}
+	return models.ConvertToString(fs.Type, value)
 }
 
 func (cc *ClientWithContext) fillEvent(context context.Context, event usage.UsageEvent) usage.UsageEvent {
