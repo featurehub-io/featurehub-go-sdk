@@ -326,6 +326,76 @@ func myHandler(w http.ResponseWriter, r *http.Request) {
 - `AsConvertibleString(key)` — returns the feature value as its string representation
 - `WithContext(ctx *models.Context) FeatureHubContext` — returns a new context with updated evaluation attributes
 
+### Testing with MockContext
+
+The `pkg/mocks` package provides `MockContext`, which implements `interfaces.Context` from a plain `map[string]interface{}`. Use it in unit tests to control exactly which feature values your code sees, without connecting to a FeatureHub server.
+
+```go
+import "github.com/featurehub-io/featurehub-go-sdk/pkg/mocks"
+
+ctx := mocks.NewMockContext(map[string]interface{}{
+    "darkMode":    true,
+    "maxPageSize": float64(25),
+    "welcomeMsg":  "Hello!",
+})
+```
+
+**Value types** must match what the tested code expects:
+
+| Feature type | Go type |
+|---|---|
+| BOOLEAN | `bool` |
+| NUMBER | `float64` |
+| STRING | `string` |
+| JSON | `string` |
+
+#### Get* methods
+
+Return the value and a `nil` error when the key is present and the type matches. Return an `ErrFeatureNotFound` if the key is absent, or `ErrInvalidType` if the stored value is the wrong Go type:
+
+```go
+enabled, err := ctx.GetBoolean(context.Background(), "darkMode")  // true, nil
+_, err = ctx.GetBoolean(context.Background(), "missing")           // false, ErrFeatureNotFound
+_, err = ctx.GetBoolean(context.Background(), "welcomeMsg")        // false, ErrInvalidType
+```
+
+#### Convenience methods
+
+Return the supplied default when the key is absent or the type is wrong — no error:
+
+```go
+enabled := ctx.Boolean(context.Background(), "darkMode", false)    // true
+size    := ctx.Number(context.Background(), "maxPageSize", 10.0)   // 25.0
+msg     := ctx.String(context.Background(), "missing", "default")  // "default"
+```
+
+#### Other behaviour
+
+- `AllKeys()` returns the keys present in the map at construction time.
+- `Properties()` always returns `nil`.
+- All `AddNotifier*` calls are no-ops that return `("", nil)`.
+- `WithContext()` returns the same mock (context attributes are ignored).
+- Usage methods (`RecordUsageEvent`, `GetContextUsage`, `RecordNamedUsage`) are no-ops.
+- `AsConvertibleString(ctx, key)` returns `fmt.Sprintf("%v", value)` for any stored value, or `ErrFeatureNotFound` if absent.
+
+#### Using MockContext in a test
+
+```go
+func TestMyHandler(t *testing.T) {
+    fhCtx := mocks.NewMockContext(map[string]interface{}{
+        "newCheckout": true,
+        "discount":    float64(15),
+    })
+
+    result := myBusinessLogic(context.Background(), fhCtx)
+
+    assert.Equal(t, "new-checkout", result.Template)
+    assert.Equal(t, 15.0, result.Discount)
+}
+```
+
+Where `myBusinessLogic` accepts `interfaces.Context`, you can swap in `MockContext` with no other changes to production code.
+
 ### Client-side rollout strategies
 Some rollout strategies need to be calculated per-request, which means that we can't rely on the server to do this for us. For this we provide the ability to apply a client context to a feature before using its value:
 
@@ -623,14 +693,14 @@ repo.RemoveUsageStream(id)
 
 Note that the `Adapter` (used by `RegisterUsagePlugin`) calls each plugin's `Send` in a separate goroutine, while direct stream handlers registered via `RegisterUsageStream` are called synchronously.
 
-
 Setup using docker
 ----------------
-We have dockerfile, use below commands to setup
+We have dockerfile which builds and runs the todo-server example, use below commands to setup
 ```
 1. docker build -t featurehub-go-sdk:v1 .
 2. docker run -p 8080:8080 featurehub-go-sdk:v1
 ```
+It is primarily used in our e2e testing.
 
 Further examples
 ----------------
