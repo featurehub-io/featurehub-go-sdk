@@ -75,14 +75,17 @@ func (cc *ClientWithContext) String(context context.Context, featureKey string, 
 
 // GetBoolean searches for a feature by key, returns the value as a boolean:
 func (cc *ClientWithContext) GetBoolean(context context.Context, key string) (bool, error) {
-	// Use the existing GetFeature method:
+	return cc.getBooleanInternal(context, key, true)
+}
+
+func (cc *ClientWithContext) getBooleanInternal(context context.Context, key string, recordUsage bool) (bool, error) {
 	fs, matched, value, err := cc.featureRepository.GetInternalBoolean(context, key)
 
 	if err != nil {
 		return false, err
 	}
 	if matched {
-		if fs != nil {
+		if fs != nil && recordUsage {
 			cc.used(context, key, fs, value)
 		}
 		return value, nil
@@ -97,13 +100,16 @@ func (cc *ClientWithContext) GetBoolean(context context.Context, key string) (bo
 
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(bool); ok {
-				cc.used(context, key, fs, strategyValue)
-
+				if recordUsage {
+					cc.used(context, key, fs, strategyValue)
+				}
 				return strategyValue, nil
 			}
 		}
 
-		cc.used(context, key, fs, value)
+		if recordUsage {
+			cc.used(context, key, fs, value)
+		}
 	}
 
 	// Return the default value as a fall-back:
@@ -112,13 +118,17 @@ func (cc *ClientWithContext) GetBoolean(context context.Context, key string) (bo
 
 // GetNumber searches for a feature by key, returns the value as a float64:
 func (cc *ClientWithContext) GetNumber(context context.Context, key string) (*float64, error) {
+	return cc.getNumberInternal(context, key, true)
+}
+
+func (cc *ClientWithContext) getNumberInternal(context context.Context, key string, recordUsage bool) (*float64, error) {
 	fs, matched, value, err := cc.featureRepository.GetInternalNumber(context, key)
 
 	if err != nil {
 		return nil, err
 	}
 	if matched {
-		if fs != nil {
+		if fs != nil && recordUsage {
 			cc.used(context, key, fs, value)
 		}
 		return value, nil
@@ -133,27 +143,30 @@ func (cc *ClientWithContext) GetNumber(context context.Context, key string) (*fl
 
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(float64); ok {
-				cc.used(context, key, fs, strategyValue)
-
+				if recordUsage {
+					cc.used(context, key, fs, strategyValue)
+				}
 				return &strategyValue, nil
 			}
 		}
 
-		cc.used(context, key, fs, value)
+		if recordUsage {
+			cc.used(context, key, fs, value)
+		}
 	}
 
 	// Return the default value as a fall-back:
 	return value, nil
 }
 
-func (cc *ClientWithContext) getContextString(context context.Context, key string, valueType models.FeatureValueType) (*string, error) {
+func (cc *ClientWithContext) getContextStringInternal(context context.Context, key string, valueType models.FeatureValueType, recordUsage bool) (*string, error) {
 	fs, matched, value, err := cc.featureRepository.GetInternalString(context, key, valueType)
 
 	if err != nil {
 		return nil, err
 	}
 	if matched {
-		if fs != nil {
+		if fs != nil && recordUsage {
 			cc.used(context, key, fs, value)
 		}
 		return value, nil
@@ -168,13 +181,16 @@ func (cc *ClientWithContext) getContextString(context context.Context, key strin
 
 			// Assert the value:
 			if strategyValue, ok := calculatedValue.(string); ok {
-				cc.used(context, key, fs, strategyValue)
-
+				if recordUsage {
+					cc.used(context, key, fs, strategyValue)
+				}
 				return &strategyValue, nil
 			}
 		}
 
-		cc.used(context, key, fs, value)
+		if recordUsage {
+			cc.used(context, key, fs, value)
+		}
 	}
 
 	// Return the default value as a fall-back:
@@ -183,12 +199,12 @@ func (cc *ClientWithContext) getContextString(context context.Context, key strin
 
 // GetRawJSON searches for a feature by key, returns the value as a JSON string:
 func (cc *ClientWithContext) GetRawJSON(context context.Context, key string) (*string, error) {
-	return cc.getContextString(context, key, models.TypeJSON)
+	return cc.getContextStringInternal(context, key, models.TypeJSON, true)
 }
 
 // GetString searches for a feature by key, returns the value as a string:
 func (cc *ClientWithContext) GetString(context context.Context, key string) (*string, error) {
-	return cc.getContextString(context, key, models.TypeString)
+	return cc.getContextStringInternal(context, key, models.TypeString, true)
 }
 
 func (cc *ClientWithContext) Properties(context context.Context, featureKey string) map[string]string {
@@ -286,11 +302,11 @@ func (cc *ClientWithContext) RecordUsageEvent(context context.Context, event usa
 // GetContextUsage - This gives a full event stuffed with the context and all features
 func (cc *ClientWithContext) GetContextUsage(context context.Context) usage.UsageEvent {
 	// user key will be filled in when fillEvent is called
-	return cc.fillEvent(context, cc.featureRepository.UsageProvider().NewUsageContextCollectionEvent(""))
+	return cc.fillEvent(context, cc.featureRepository.UsageProvider().NewUsageContextCollectionEvent("", nil))
 }
 
 func (cc *ClientWithContext) RecordNamedUsage(context context.Context, name string, additionalParams usage.ContextRecord) {
-	cc.RecordUsageEvent(context, cc.fillEvent(context, cc.featureRepository.UsageProvider().NewNamedUsageCollection(name, additionalParams)))
+	cc.RecordUsageEvent(context, cc.fillEvent(context, cc.featureRepository.UsageProvider().NewNamedUsageCollection(name, "", additionalParams)))
 }
 
 func (cc *ClientWithContext) AsConvertibleString(context context.Context, key string) (string, error) {
@@ -334,13 +350,13 @@ func (cc *ClientWithContext) mapRepositoryFeaturesToUsageValues(context context.
 	for _, feat := range features {
 		found = true
 		if feat.ValueType == models.TypeNumber {
-			value, ok = cc.GetNumber(context, feat.Key)
+			value, ok = cc.getNumberInternal(context, feat.Key, false)
 		} else if feat.ValueType == models.TypeString {
-			value, ok = cc.GetString(context, feat.Key)
+			value, ok = cc.getContextStringInternal(context, feat.Key, models.TypeString, false)
 		} else if feat.ValueType == models.TypeJSON {
-			value, ok = cc.GetRawJSON(context, feat.Key)
+			value, ok = cc.getContextStringInternal(context, feat.Key, models.TypeJSON, false)
 		} else if feat.ValueType == models.TypeBoolean {
-			value, ok = cc.GetBoolean(context, feat.Key)
+			value, ok = cc.getBooleanInternal(context, feat.Key, false)
 		} else {
 			found = false
 		}

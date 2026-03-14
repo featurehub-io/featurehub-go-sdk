@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -62,15 +61,9 @@ func main() {
 
 	r := mux.NewRouter()
 
-	r.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			next.ServeHTTP(w, r.WithContext(core.StoreInContext(r.Context(), fhConfig.NewContext())))
-		})
-	})
-
+	r.Use(core.ContextMiddleware(fhConfig))
 	r.Use(loggingMiddleware)
 	r.Use(corsMiddleware)
-	r.Use(core.ContextMiddleware(fhConfig))
 
 	r.HandleFunc("/name/{name}", nameHandler).Methods(http.MethodGet)
 	r.HandleFunc("/foo/{someId}", fooHandler).Methods(http.MethodGet)
@@ -107,12 +100,27 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// hubFromRequest extracts the ContextFeatureHub from the request context.
+// Writes a 500 and returns nil if the hub is not present.
+func hubFromRequest(w http.ResponseWriter, r *http.Request) *core.ContextFeatureHub {
+	hub, err := core.NewFromContext(r.Context())
+	if err != nil {
+		http.Error(w, "featurehub not available", http.StatusInternalServerError)
+		return nil
+	}
+	return hub
+}
+
 // nameHandler returns "HELLO WORLD" or "hello world" depending on FEATURE_TITLE_TO_UPPERCASE.
 func nameHandler(w http.ResponseWriter, r *http.Request) {
+	hub := hubFromRequest(w, r)
+	if hub == nil {
+		return
+	}
 	name := mux.Vars(r)["name"]
-	ctx := fhConfig.WithContext(&models.Context{Userkey: name})
+	userHub := hub.WithContext(&models.Context{Userkey: name})
 
-	if uppercase, _ := ctx.GetBoolean(r.Context(), "FEATURE_TITLE_TO_UPPERCASE"); uppercase {
+	if uppercase, _ := userHub.GetBoolean("FEATURE_TITLE_TO_UPPERCASE"); uppercase {
 		fmt.Fprint(w, "HELLO WORLD")
 	} else {
 		fmt.Fprint(w, "hello world")
@@ -135,7 +143,12 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 
 // listTodoHandler returns the todo list for a user with feature-processed titles.
 func listTodoHandler(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, todoList(mux.Vars(r)["user"]))
+	hub := hubFromRequest(w, r)
+	if hub == nil {
+		return
+	}
+	user := mux.Vars(r)["user"]
+	writeJSON(w, http.StatusOK, todoList(user, hub.WithContext(&models.Context{Userkey: user})))
 }
 
 type createRequest struct {
@@ -146,6 +159,10 @@ type createRequest struct {
 
 // createTodoHandler adds a new todo for a user.
 func createTodoHandler(w http.ResponseWriter, r *http.Request) {
+	hub := hubFromRequest(w, r)
+	if hub == nil {
+		return
+	}
 	user := mux.Vars(r)["user"]
 
 	var req createRequest
@@ -158,11 +175,15 @@ func createTodoHandler(w http.ResponseWriter, r *http.Request) {
 	store[user] = append(userTodos(user), &Todo{ID: req.ID, Title: req.Title, Resolved: req.Resolved})
 	storeMu.Unlock()
 
-	writeJSON(w, http.StatusCreated, todoList(user))
+	writeJSON(w, http.StatusCreated, todoList(user, hub.WithContext(&models.Context{Userkey: user})))
 }
 
 // resolveHandler marks a specific todo as resolved.
 func resolveHandler(w http.ResponseWriter, r *http.Request) {
+	hub := hubFromRequest(w, r)
+	if hub == nil {
+		return
+	}
 	vars := mux.Vars(r)
 	user, id := vars["user"], vars["id"]
 
@@ -181,11 +202,15 @@ func resolveHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, todoList(user))
+	writeJSON(w, http.StatusOK, todoList(user, hub.WithContext(&models.Context{Userkey: user})))
 }
 
 // deleteTodoHandler removes a specific todo.
 func deleteTodoHandler(w http.ResponseWriter, r *http.Request) {
+	hub := hubFromRequest(w, r)
+	if hub == nil {
+		return
+	}
 	vars := mux.Vars(r)
 	user, id := vars["user"], vars["id"]
 
@@ -205,7 +230,7 @@ func deleteTodoHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, todoList(user))
+	writeJSON(w, http.StatusOK, todoList(user, hub.WithContext(&models.Context{Userkey: user})))
 }
 
 // deleteUserHandler removes all todos for a user.
@@ -220,16 +245,14 @@ func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // todoList returns a user's todos with feature-flag-processed titles.
-func todoList(user string) []Todo {
-	ctx := fhConfig.WithContext(&models.Context{Userkey: user})
-
+func todoList(user string, hub interfaces.FeatureHubContext) []Todo {
 	storeMu.RLock()
 	todos := userTodos(user)
 	result := make([]Todo, 0, len(todos))
 	for _, todo := range todos {
 		result = append(result, Todo{
 			ID:       todo.ID,
-			Title:    processTitle(ctx, todo.Title),
+			Title:    processTitle(hub, todo.Title),
 			Resolved: todo.Resolved,
 		})
 	}
@@ -244,18 +267,18 @@ func todoList(user string) []Todo {
 //   - FEATURE_NUMBER: if set, appends the number value to "pay" todos.
 //   - FEATURE_JSON:   if set, appends json["foo"] to "find" todos.
 //   - FEATURE_TITLE_TO_UPPERCASE: if enabled, uppercases the final title.
-func processTitle(ctx interfaces.Context, title string) string {
+func processTitle(hub interfaces.FeatureHubContext, title string) string {
 	newTitle := title
 
-	if str, err := ctx.GetString(context.TODO(), "FEATURE_STRING"); err == nil && str != nil && title == "buy" {
+	if str, err := hub.GetString("FEATURE_STRING"); err == nil && str != nil && title == "buy" {
 		newTitle = fmt.Sprintf("%s %s", title, *str)
 	}
 
-	if num, err := ctx.GetNumber(context.TODO(), "FEATURE_NUMBER"); err == nil && num != nil && title == "pay" {
+	if num, err := hub.GetNumber("FEATURE_NUMBER"); err == nil && num != nil && title == "pay" {
 		newTitle = fmt.Sprintf("%s %g", title, *num)
 	}
 
-	if rawJSON, err := ctx.GetRawJSON(context.TODO(), "FEATURE_JSON"); err == nil && rawJSON != nil && title == "find" {
+	if rawJSON, err := hub.GetRawJSON("FEATURE_JSON"); err == nil && rawJSON != nil && title == "find" {
 		var obj map[string]interface{}
 		if json.Unmarshal([]byte(*rawJSON), &obj) == nil {
 			if foo, ok := obj["foo"].(string); ok {
@@ -264,7 +287,7 @@ func processTitle(ctx interfaces.Context, title string) string {
 		}
 	}
 
-	if uppercase, _ := ctx.GetBoolean(context.TODO(), "FEATURE_TITLE_TO_UPPERCASE"); uppercase {
+	if uppercase, _ := hub.GetBoolean("FEATURE_TITLE_TO_UPPERCASE"); uppercase {
 		newTitle = strings.ToUpper(newTitle)
 	}
 

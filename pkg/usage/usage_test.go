@@ -79,18 +79,18 @@ func TestNewUsageValueFromFeature(t *testing.T) {
 // --- BaseUsageEvent ---
 
 func TestBaseUsageEventUserKey(t *testing.T) {
-	b := newBaseUsageEvent("kwong", nil)
+	b := NewBaseUsageEvent("kwong", nil)
 	assert.Equal(t, "kwong", b.UserKey())
 }
 
 func TestBaseUsageEventCollectUsageRecord(t *testing.T) {
-	b := newBaseUsageEvent("bob", ContextRecord{"x": "1"})
+	b := NewBaseUsageEvent("bob", ContextRecord{"x": "1"})
 	rec := b.CollectUsageRecord()
 	assert.Equal(t, "1", rec["x"])
 }
 
 func TestBaseUsageEventCollectUsageRecordIsCopy(t *testing.T) {
-	b := newBaseUsageEvent("", ContextRecord{"k": "v"})
+	b := NewBaseUsageEvent("", ContextRecord{"k": "v"})
 	rec := b.CollectUsageRecord()
 	rec["k"] = "mutated"
 
@@ -100,7 +100,7 @@ func TestBaseUsageEventCollectUsageRecordIsCopy(t *testing.T) {
 }
 
 func TestBaseUsageEventSetAdditionalData(t *testing.T) {
-	b := newBaseUsageEvent("", nil)
+	b := NewBaseUsageEvent("", nil)
 	b.SetAdditionalData(ContextRecord{"a": "b"})
 	assert.Equal(t, "", b.UserKey())
 	rec := b.CollectUsageRecord()
@@ -164,16 +164,16 @@ func TestUsageEventWithFeatureMergeOrder(t *testing.T) {
 // --- BaseFeaturesCollection ---
 
 func TestUsageFeaturesCollectionEventName(t *testing.T) {
-	c := NewUsageFeaturesCollection()
+	c := NewUsageFeaturesCollection("", nil)
 	assert.Equal(t, "feature-collection", c.EventName())
 }
 
 func TestUsageFeaturesCollectionCollectUsageRecord(t *testing.T) {
-	c := NewUsageFeaturesCollection()
-	c.FeatureValues = []*FeatureHubUsageValue{
+	c := NewUsageFeaturesCollection("", nil)
+	c.SetFeatureValues([]*FeatureHubUsageValue{
 		{ID: "1", Key: "flag-a", Value: "on"},
 		{ID: "2", Key: "flag-b", Value: "hello"},
-	}
+	})
 	c.SetAdditionalData(ContextRecord{"extra": "data"})
 
 	rec := c.CollectUsageRecord()
@@ -196,10 +196,10 @@ func TestUsageFeaturesCollectionContextUserKey(t *testing.T) {
 
 func TestUsageFeaturesCollectionContextCollectUsageRecord(t *testing.T) {
 	c := NewUsageFeaturesCollectionContext("", nil)
-	c.FeatureValues = []*FeatureHubUsageValue{
+	c.SetFeatureValues([]*FeatureHubUsageValue{
 		{ID: "1", Key: "flag-x", Value: "off"},
-	}
-	c.ContextAttributes["country"] = "Thailand"
+	})
+	c.SetContextAttributes(ContextRecord{"country": "Thailand"})
 
 	rec := c.CollectUsageRecord()
 	assert.Equal(t, "off", rec["flag-x"])
@@ -214,17 +214,17 @@ func TestUsageNamedFeaturesCollectionEventName(t *testing.T) {
 }
 
 func TestUsageNamedFeaturesCollectionCollectUsageRecord(t *testing.T) {
-	c := NewUsageNamedFeaturesCollection("checkout", "dave", ContextRecord{"session": "s1"})
-	c.FeatureValues = []*FeatureHubUsageValue{
+	c := NewUsageNamedFeaturesCollection("checkout", "orm", ContextRecord{"session": "s1"})
+	c.SetFeatureValues([]*FeatureHubUsageValue{
 		{ID: "1", Key: "promo", Value: "on"},
-	}
-	c.ContextAttributes["device"] = "mobile"
+	})
+	c.SetContextAttributes(ContextRecord{"device": "mobile"})
 
 	rec := c.CollectUsageRecord()
 	assert.Equal(t, "s1", rec["session"])
 	assert.Equal(t, "on", rec["promo"])
 	assert.Equal(t, "mobile", rec["device"])
-	assert.Equal(t, "dave", c.UserKey())
+	assert.Equal(t, "orm", c.UserKey())
 }
 
 // --- Provider ---
@@ -249,18 +249,18 @@ func TestProviderNewUsageFeature(t *testing.T) {
 }
 
 func TestProviderNewUsageCollectionEvent(t *testing.T) {
-	c := DefaultProvider.NewUsageCollectionEvent()
+	c := DefaultProvider.NewUsageCollectionEvent("", nil)
 	assert.Equal(t, "feature-collection", c.EventName())
 }
 
 func TestProviderNewUsageContextCollectionEvent(t *testing.T) {
-	c := DefaultProvider.NewUsageContextCollectionEvent("eve")
+	c := DefaultProvider.NewUsageContextCollectionEvent("eve", nil)
 	assert.Equal(t, "feature-collection-context", c.EventName())
 	assert.Equal(t, "eve", c.UserKey())
 }
 
 func TestProviderNewNamedUsageCollection(t *testing.T) {
-	c := DefaultProvider.NewNamedUsageCollection("my-page", nil)
+	c := DefaultProvider.NewNamedUsageCollection("my-page", "", nil)
 	assert.Equal(t, "my-page", c.EventName())
 }
 
@@ -394,5 +394,5 @@ func TestAdapterCloseRemovesHandler(t *testing.T) {
 // panickyPlugin panics on Send.
 type panickyPlugin struct{}
 
-func (*panickyPlugin) DefaultPluginAttributes() ContextRecord                 { return nil }
-func (*panickyPlugin) Send(ctx context.Context, _ UsageEvent) context.Context { panic("plugin error") }
+func (*panickyPlugin) DefaultPluginAttributes() ContextRecord               { return nil }
+func (*panickyPlugin) Send(_ context.Context, _ UsageEvent) context.Context { panic("plugin error") }

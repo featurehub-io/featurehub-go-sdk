@@ -8,6 +8,9 @@ import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 )
 
+// Note: all NewBaseXXX functions are exposed to easily allow users of the library to create their own descendents
+// of the structs to retain their own data.
+
 // ContextRecord is a free-form map for context attributes and additional event data.
 type ContextRecord = map[string]interface{}
 
@@ -90,7 +93,9 @@ func NewUsageValueFromFeature(feature *models.FeatureState) *FeatureHubUsageValu
 
 // UsageEvent is implemented by all usage event types.
 type UsageEvent interface {
+	EventName() string
 	UserKey() string
+	SetAdditionalData(ContextRecord)
 	SetUserKey(userKey string)
 	CollectUsageRecord() ContextRecord
 }
@@ -101,9 +106,13 @@ type BaseUsageEvent struct {
 	additionalData ContextRecord
 }
 
-// newBaseUsageEvent constructs a BaseUsageEvent.
-func newBaseUsageEvent(userKey string, additionalData ContextRecord) BaseUsageEvent {
-	b := BaseUsageEvent{userKey: userKey}
+func NewUsageEvent(userKey string, additionalData ContextRecord) UsageEvent {
+	return NewBaseUsageEvent(userKey, additionalData)
+}
+
+// NewBaseUsageEvent constructs a BaseUsageEvent.
+func NewBaseUsageEvent(userKey string, additionalData ContextRecord) *BaseUsageEvent {
+	b := &BaseUsageEvent{userKey: userKey}
 	if additionalData != nil {
 		b.additionalData = additionalData
 	} else {
@@ -113,7 +122,8 @@ func newBaseUsageEvent(userKey string, additionalData ContextRecord) BaseUsageEv
 }
 
 // UserKey returns the user key.
-func (b *BaseUsageEvent) UserKey() string { return b.userKey }
+func (b *BaseUsageEvent) UserKey() string   { return b.userKey }
+func (b *BaseUsageEvent) EventName() string { return "usage" }
 func (b *BaseUsageEvent) SetUserKey(userKey string) {
 	b.userKey = userKey
 }
@@ -148,16 +158,20 @@ type BaseWithFeature struct {
 }
 
 type EventWithFeature interface {
-	*UsageEvent
+	UsageEvent
 	SetContextAttributes(contextAttributes ContextRecord)
 	SetFeature(feature *FeatureHubUsageValue)
 	GetFeature() *FeatureHubUsageValue
 }
 
 // NewUsageEventWithFeature constructs a BaseWithFeature.
-func NewUsageEventWithFeature(feature *FeatureHubUsageValue, contextAttributes ContextRecord, userKey string) *BaseWithFeature {
+func NewUsageEventWithFeature(feature *FeatureHubUsageValue, contextAttributes ContextRecord, userKey string) EventWithFeature {
+	return newUsageEventWithFeature(feature, contextAttributes, userKey)
+}
+
+func newUsageEventWithFeature(feature *FeatureHubUsageValue, contextAttributes ContextRecord, userKey string) *BaseWithFeature {
 	return &BaseWithFeature{
-		BaseUsageEvent:    newBaseUsageEvent(userKey, nil),
+		BaseUsageEvent:    *NewBaseUsageEvent(userKey, nil),
 		contextAttributes: contextAttributes,
 		feature:           feature,
 	}
@@ -179,7 +193,7 @@ func (e *BaseWithFeature) SetContextAttributes(contextAttributes ContextRecord) 
 
 // CollectUsageRecord merges additional data, context attributes, and feature fields.
 func (e *BaseWithFeature) CollectUsageRecord() ContextRecord {
-	result := e.baseRecord()
+	result := e.BaseUsageEvent.CollectUsageRecord()
 	for k, v := range e.contextAttributes {
 		result[k] = v
 	}
@@ -206,9 +220,14 @@ type FeaturesCollection interface {
 }
 
 // NewUsageFeaturesCollection constructs an empty BaseFeaturesCollection.
-func NewUsageFeaturesCollection() *BaseFeaturesCollection {
+func NewUsageFeaturesCollection(userKey string, additionalData ContextRecord) FeaturesCollection {
+	return NewBaseUsageFeaturesCollection(userKey, additionalData)
+}
+
+func NewBaseUsageFeaturesCollection(userKey string, additionalData ContextRecord) *BaseFeaturesCollection {
 	return &BaseFeaturesCollection{
-		BaseUsageEvent: newBaseUsageEvent("", nil),
+		BaseUsageEvent: *NewBaseUsageEvent(userKey, additionalData),
+		FeatureValues:  make([]*FeatureHubUsageValue, 0),
 	}
 }
 
@@ -224,7 +243,7 @@ func (c *BaseFeaturesCollection) SetFeatureValues(featureValues []*FeatureHubUsa
 
 // CollectUsageRecord merges additional data with feature key→value pairs.
 func (c *BaseFeaturesCollection) CollectUsageRecord() ContextRecord {
-	result := c.baseRecord()
+	result := c.BaseUsageEvent.CollectUsageRecord()
 	for _, fv := range c.FeatureValues {
 		result[fv.Key] = fv.Value
 	}
@@ -238,22 +257,20 @@ type BaseCollectionContext struct {
 	ContextAttributes ContextRecord
 }
 
-func (*BaseCollectionContext) GetFeatureValues() []*FeatureHubUsageValue {
-	//TODO implement me
-	panic("implement me")
-}
-
 type CollectionContext interface {
+	FeaturesCollection
 	SetContextAttributes(contextAttributes ContextRecord)
 }
 
 // NewUsageFeaturesCollectionContext constructs an empty BaseCollectionContext.
-func NewUsageFeaturesCollectionContext(userKey string, additionalData ContextRecord) *BaseCollectionContext {
+func NewUsageFeaturesCollectionContext(userKey string, additionalData ContextRecord) CollectionContext {
+	return NewBaseUsageFeaturesCollectionContext(userKey, additionalData)
+}
+
+func NewBaseUsageFeaturesCollectionContext(userKey string, additionalData ContextRecord) *BaseCollectionContext {
 	return &BaseCollectionContext{
-		BaseFeaturesCollection: BaseFeaturesCollection{
-			BaseUsageEvent: newBaseUsageEvent(userKey, additionalData),
-		},
-		ContextAttributes: make(ContextRecord),
+		BaseFeaturesCollection: *NewBaseUsageFeaturesCollection(userKey, additionalData),
+		ContextAttributes:      make(ContextRecord),
 	}
 }
 
@@ -272,27 +289,30 @@ func (c *BaseCollectionContext) CollectUsageRecord() ContextRecord {
 	return result
 }
 
-// UsageNamedFeaturesCollection is a BaseCollectionContext with a custom event name.
-type UsageNamedFeaturesCollection struct {
+// BaseUsageNamedFeaturesCollection is a BaseCollectionContext with a custom event name.
+type BaseUsageNamedFeaturesCollection struct {
 	BaseCollectionContext
 	name string
 }
 
-func (c *UsageNamedFeaturesCollection) GetFeatureValues() []*FeatureHubUsageValue {
-	//TODO implement me
-	panic("implement me")
+type UsageNamedFeaturesCollection interface {
+	CollectionContext
 }
 
 // NewUsageNamedFeaturesCollection constructs a UsageNamedFeaturesCollection.
-func NewUsageNamedFeaturesCollection(name, userKey string, additionalData ContextRecord) *UsageNamedFeaturesCollection {
-	return &UsageNamedFeaturesCollection{
-		BaseCollectionContext: *NewUsageFeaturesCollectionContext(userKey, additionalData),
+func NewUsageNamedFeaturesCollection(name, userKey string, additionalData ContextRecord) UsageNamedFeaturesCollection {
+	return NewBaseUsageNamedFeaturesCollection(name, userKey, additionalData)
+}
+
+func NewBaseUsageNamedFeaturesCollection(name, userKey string, additionalData ContextRecord) *BaseUsageNamedFeaturesCollection {
+	return &BaseUsageNamedFeaturesCollection{
+		BaseCollectionContext: *NewBaseUsageFeaturesCollectionContext(userKey, additionalData),
 		name:                  name,
 	}
 }
 
 // EventName returns the custom name.
-func (c *UsageNamedFeaturesCollection) EventName() string { return c.name }
+func (c *BaseUsageNamedFeaturesCollection) EventName() string { return c.name }
 
 // Plugin is implemented by usage event consumers.
 type Plugin interface {
@@ -306,10 +326,11 @@ type Provider struct{}
 type ProviderFactory interface {
 	NewUsageValue(id, key, environmentID string, value interface{}, valueType models.FeatureValueType) *FeatureHubUsageValue
 	NewUsageValueFromFeature(feature *models.FeatureState) *FeatureHubUsageValue
-	NewUsageFeature(feature *FeatureHubUsageValue, contextAttributes ContextRecord, userKey string) *BaseWithFeature
-	NewUsageCollectionEvent() *BaseFeaturesCollection
-	NewUsageContextCollectionEvent(userKey string) *BaseCollectionContext
-	NewNamedUsageCollection(name string, additionalData ContextRecord) *UsageNamedFeaturesCollection
+	NewUsageEvent(userKey string, additionalData ContextRecord) UsageEvent
+	NewUsageFeature(feature *FeatureHubUsageValue, contextAttributes ContextRecord, userKey string) EventWithFeature
+	NewUsageCollectionEvent(userKey string, additionalData ContextRecord) FeaturesCollection
+	NewUsageContextCollectionEvent(userKey string, additionalData ContextRecord) CollectionContext
+	NewNamedUsageCollection(name string, userKey string, additionalData ContextRecord) UsageNamedFeaturesCollection
 }
 
 // DefaultProvider is the package-level default Provider.
@@ -325,22 +346,26 @@ func (*Provider) NewUsageValueFromFeature(feature *models.FeatureState) *Feature
 	return NewUsageValueFromFeature(feature)
 }
 
+func (*Provider) NewUsageEvent(userKey string, additionalData ContextRecord) UsageEvent {
+	return NewUsageEvent(userKey, additionalData)
+}
+
 // NewUsageFeature creates a BaseWithFeature.
-func (*Provider) NewUsageFeature(feature *FeatureHubUsageValue, contextAttributes ContextRecord, userKey string) *BaseWithFeature {
+func (*Provider) NewUsageFeature(feature *FeatureHubUsageValue, contextAttributes ContextRecord, userKey string) EventWithFeature {
 	return NewUsageEventWithFeature(feature, contextAttributes, userKey)
 }
 
 // NewUsageCollectionEvent creates an empty BaseFeaturesCollection.
-func (*Provider) NewUsageCollectionEvent() *BaseFeaturesCollection {
-	return NewUsageFeaturesCollection()
+func (*Provider) NewUsageCollectionEvent(userKey string, additionalData ContextRecord) FeaturesCollection {
+	return NewUsageFeaturesCollection(userKey, additionalData)
 }
 
 // NewUsageContextCollectionEvent creates an empty BaseCollectionContext.
-func (*Provider) NewUsageContextCollectionEvent(userKey string) *BaseCollectionContext {
-	return NewUsageFeaturesCollectionContext(userKey, nil)
+func (*Provider) NewUsageContextCollectionEvent(userKey string, additionalData ContextRecord) CollectionContext {
+	return NewUsageFeaturesCollectionContext(userKey, additionalData)
 }
 
 // NewNamedUsageCollection creates a UsageNamedFeaturesCollection with the given name.
-func (*Provider) NewNamedUsageCollection(name string, additionalData ContextRecord) *UsageNamedFeaturesCollection {
-	return NewUsageNamedFeaturesCollection(name, "", additionalData)
+func (*Provider) NewNamedUsageCollection(name string, userKey string, additionalData ContextRecord) UsageNamedFeaturesCollection {
+	return NewUsageNamedFeaturesCollection(name, userKey, additionalData)
 }

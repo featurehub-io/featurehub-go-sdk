@@ -19,7 +19,7 @@ Todo
 - [X] Context changes are not tracked therefore server side evaluation is not properly supported
 - [X] Usage
 - [X] Usage should include the environment id
-- [ ] Usage otel
+- [X] Usage otel
 - [ ] Usage segment
 - [X] Check the percentage calc is the same in golang as everywhere else
 - [X] Client-side rollout strategies (https://github.com/featurehub-io/featurehub/tree/master/backend/sse-strategy-matchers/src)
@@ -37,23 +37,3 @@ Todo
 		- [x] boolean [==, !=]
 		- [x] ip-address [==, !=, excludes, includes]
 
-Strategy matching logic:
-- If strategy has a percentage then figure out the percentage text. If PercentageAttributes is empty or nil, 
-it will be SessionId or UserKey. If neither exists, SessionId will be randomised and allocated into the context for the
-session. If PercentageAttributes is set, it will collect each attribute from the context and concatenate them with a `$`
-separator. The final percentage text to evaluate against is this text + featureID. Features
-can have strategies that are mixes of different percentages with different PercentAttributes, so we keep track of where we are
-with each key and accumulate the totals as we go. Percentages are not absolute, they are relative to the last percentage _using that key_,
-so 33% followed by 40% will cover 0>= <=33%, >33%, <= 73%. If the 33% and 40% use different keys, they they will be evaluated as <= 33% and <= 40% on their own terms. 
-If matched then attributes are compared if any.
- 
-- If the percentage doesn't match then continue with the next strategy
-- If percentage matches (or there is no percentage) then continue and iterate through the attributes
-	- If the attribute doesn't match then fall back and continue with the next strategy
-	- If attribute matches then continue and check the next attribute
-	- If all attributes match then we return the value from this strategy
-	- Otherwise continue with the next strategy
-- If no strategies match then return the default value for the feature
-
-GenerateHeader in Context should take all the attributes of the struct except Custom and add them to an array where 
-they have values and set them to lower case key
