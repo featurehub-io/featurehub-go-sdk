@@ -10,7 +10,7 @@ Todo
 - [X] Global "readyness" callback (either OK when data has arrived, or an error if there was a fail)
 - [X] Removed support for server-side ClientContext, and submit this as an x-featurehub header upon connection
 - [X] Dockerfile for building and running the todo-server
-- { ] e2e tests using the javascript client image once Alex figures it out
+- [ ] e2e tests using the javascript client image once Alex figures it out
 - [X] Feature Properties
 - [X] Polling should be able to handle multi SDK Keys
 - [ ] Can SSE server side eval be supported?
