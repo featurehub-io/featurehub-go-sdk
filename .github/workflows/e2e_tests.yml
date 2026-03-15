@@ -110,10 +110,51 @@ jobs:
           docker run --rm \
             --network ${{ job.container.network }} \
             -v $PWD/adk-env:/opt/e2e \
+            -e APP_SERVER_URL=http://todo-server:8099 \
             --env-file adk-env/server.env \
             --name jsdk-sse-client \
-            ghcr.io/featurehub-io/featurehub-io/featurehub-javascript-sdk:main-adk-e2e \
+            ghcr.io/featurehub-io/featurehub-javascript-sdk:main \
             /bin/bash -c "cd examples/todo-server-tests && pnpm run test"          
+
+      - name: Run todo-server again but in polling mode
+        run: |
+          docker stop todo-server && docker rm -f todo-server && \
+          docker run -d \
+            --network ${{ job.container.network }} \
+            -e FEATUREHUB_POLLING_INTERVAL=3s \
+            --name todo-server \
+            -p 8099:8099 \
+            --env-file adk-env/server.env \
+            todo-server:e2e
+
+      - name: Wait for todo-server to be ready again
+        run: |
+          echo "Waiting for todo-server on port 8099..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8099/health/readiness > /dev/null 2>&1; then
+              echo "todo-server is ready"
+              exit 0
+            fi
+            echo "  attempt $i/30 — not ready yet, retrying in 2s"
+            sleep 2
+          done
+          echo "todo-server did not become ready in time"
+          docker logs todo-server
+          exit 1
+
+      - name: Run the Javascript client side e2e tests again using SSE (as we aren't testing the js-sdk)
+        # this step can hang, so force a timeout
+        timeout-minutes: 10
+        run: |
+          echo "Running j2-sdk tests using SSE default"
+          docker run --rm \
+            --network ${{ job.container.network }} \
+            -v $PWD/adk-env:/opt/e2e \
+            -e APP_SERVER_URL=http://todo-server:8099 \
+            --env-file adk-env/server.env \
+            --name jsdk-sse-client \
+            ghcr.io/featurehub-io/featurehub-javascript-sdk:main \
+            /bin/bash -c "cd examples/todo-server-tests && pnpm run test" 
 
       - name: Print logs on failure
         if: failure()
