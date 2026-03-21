@@ -157,7 +157,7 @@ A `FeatureValueInterceptor` lets you override the value returned for a feature k
 An interceptor is a function with the signature:
 
 ```go
-type FeatureValueInterceptor func(ctx context.Context, key string, feature *models.FeatureState) (value interface{}, matched bool)
+type FeatureValueInterceptor func(ctx context.Context, key string, repo interfaces.FeatureRepository, feature *models.FeatureState) (value interface{}, matched bool)
 ```
 
 Return `(value, true)` to supply an override, or `(nil, false)` to pass through to the normal evaluation. Note: value is the first return, matched bool is second. Interceptors are checked first, before rollout strategies are applied.
@@ -166,7 +166,7 @@ Register an interceptor on the config before calling `Connect()`:
 
 ```go
 fhConfig := client.New(serverAddress, apiKey)
-fhConfig.AddValueInterceptor(func(_ context.Context, key string, _ *models.FeatureState) (interface{}, bool) {
+fhConfig.AddValueInterceptor(func(_ context.Context, key string, _ interfaces.FeatureRepository, _ *models.FeatureState) (interface{}, bool) {
     if key == "myFlag" {
         return true, true // always return true for this flag
     }
@@ -226,7 +226,7 @@ fhConfig.AddValueInterceptor(interceptors.NewLocalYamlValueInterceptor(logger))
 Any function matching the `FeatureValueInterceptor` signature can be used. The `feature` argument is the current `FeatureState` from the repository (may be `nil` if the key is unknown). The returned `value` must be of the correct Go type for the feature (`bool`, `float64`, or `string`).
 
 ```go
-func myInterceptor(_ context.Context, key string, fs *models.FeatureState) (interface{}, bool) {
+func myInterceptor(_ context.Context, key string, _ interfaces.FeatureRepository, fs *models.FeatureState) (interface{}, bool) {
     overrides := map[string]interface{}{
         "darkMode":    true,
         "maxPageSize": float64(50),
@@ -463,6 +463,7 @@ A usage plugin is any type that implements the `usage.Plugin` interface:
 type Plugin interface {
     DefaultPluginAttributes() usage.ContextRecord // return nil if unused
     Send(ctx context.Context, event usage.UsageEvent) context.Context
+    CanSendAsync() bool
 }
 ```
 
@@ -472,6 +473,7 @@ Register your plugin with the config before calling `Connect()`:
 type MyAnalyticsPlugin struct{}
 
 func (p *MyAnalyticsPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
+func (p *MyAnalyticsPlugin) CanSendAsync() bool                          { return true }
 
 func (p *MyAnalyticsPlugin) Send(ctx context.Context, event usage.UsageEvent) context.Context {
     record := event.CollectUsageRecord()
@@ -485,7 +487,7 @@ fhConfig.RegisterUsagePlugin(&MyAnalyticsPlugin{})
 fhConfig.Connect()
 ```
 
-Multiple plugins can be registered; each `Send` call runs in its own goroutine. Panics inside `Send` are caught and logged — one failing plugin does not affect others.
+Multiple plugins can be registered. When `CanSendAsync()` returns `true`, `Send` is called in its own goroutine and the returned context is discarded. When `CanSendAsync()` returns `false`, `Send` is called synchronously and its returned context is threaded through to subsequent plugins. Panics inside `Send` are caught and logged in both cases — one failing plugin does not affect others.
 
 ### Passive REST and automatic polling on usage
 
@@ -691,7 +693,7 @@ id := repo.RegisterUsageStream(func(ctx context.Context, event usage.UsageEvent)
 repo.RemoveUsageStream(id)
 ```
 
-Note that the `Adapter` (used by `RegisterUsagePlugin`) calls each plugin's `Send` in a separate goroutine, while direct stream handlers registered via `RegisterUsageStream` are called synchronously.
+Note that `Adapter` (used by `RegisterUsagePlugin`) calls each plugin's `Send` according to its `CanSendAsync()` value — asynchronously in a goroutine when true, synchronously with context chaining when false. Direct stream handlers registered via `RegisterUsageStream` are always called synchronously.
 
 Setup using docker
 ----------------

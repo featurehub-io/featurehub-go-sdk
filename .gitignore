@@ -2,4 +2,5 @@ cruft
 /bin
 /todo-server
 /.idea
-/.claude
+/.claude/settings.local.json
+/.claude/memory

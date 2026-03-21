@@ -40,7 +40,7 @@ This is a Go client SDK for FeatureHub, a feature management platform. The SDK c
   - `FeatureHubConfig` — interface for `*Config`, covering the full lifecycle: `Connect()`, `Build()`, `Close()`, `NewContext()`, `WithContext()`, `IsReady()`, `ReadinessListener()`, `EdgeType()`, `Validate()`, `EnvironmentID()`, `ClientEvaluated()`, `FeaturesURL()`, `PollingFeaturesURL()`, `Timeout()`, and fluent builder methods (`WithSDKKey`, `WithLogLevel`, `WithWaitForData`, `WithFatalErrorHandler`, `RegisterUsagePlugin`, `AddValueInterceptor`). Fluent methods and `Connect`/`Build` return `FeatureHubConfig`; `NewContext`/`WithContext` return `Context`.
   - `InternalRepository` — write side: `ProcessFeature`, `ProcessFeatures`, `ProcessDeleteFeature`, `IsReady`, `AddValueInterceptor`, `WithContext`, `ReadinessListener(context.Context, func(context.Context))`.
   - `EdgeClient` — `Connect()`, `Poll()`, `ContextChange()`, `Close()`.
-  - `FeatureValueInterceptor` — `func(ctx context.Context, key string, feature *models.FeatureState) (value interface{}, matched bool)`. Note: value is returned first, matched bool second.
+  - `FeatureValueInterceptor` — `func(ctx context.Context, key string, repo FeatureRepository, feature *models.FeatureState) (value interface{}, matched bool)`. Note: value is returned first, matched bool second.
   - `ErrorFunc` — `func(error, string, map[string]interface{})` for fatal async errors.
 - **`pkg/models/`**: Domain objects.
   - `FeatureState` (including `Properties map[string]string` field serialised as `"fp"`), `FeatureEnvironmentCollection`, `Context` (with `GenerateHeader()` for sorted URL-encoded header strings), strategy types, SSE event types, callback func types.
@@ -57,9 +57,9 @@ This is a Go client SDK for FeatureHub, a feature management platform. The SDK c
   - `LocalYamlValueInterceptor` — reads feature overrides from a YAML file specified by `FEATUREHUB_OVERRIDES` env var (defaults to `featurehub-overrides.yaml`). YAML is a list of `{key, type, value}` entries. Values are converted via `models.ConvertValue` at initialisation time.
 - **`pkg/usage/`**: Usage/analytics subsystem.
   - `UsageEvent` interface + concrete types: `BaseWithFeature`, `BaseFeaturesCollection`, `BaseCollectionContext`, `UsageNamedFeaturesCollection`.
-  - `Plugin` interface: `DefaultPluginAttributes() ContextRecord`, `Send(context.Context, UsageEvent) context.Context`.
+  - `Plugin` interface: `DefaultPluginAttributes() ContextRecord`, `Send(context.Context, UsageEvent) context.Context`, `CanSendAsync() bool`. When `CanSendAsync()` returns true, `Send` is called in a goroutine and its returned context is discarded; when false, `Send` is called synchronously and its returned context is threaded through to subsequent plugins.
   - `StreamHandler` — `func(context.Context, UsageEvent)` — called when a usage event is emitted by the repository.
-  - `Adapter` — subscribes to a `StreamableRepository` and fans events out to registered `Plugin`s. Each plugin's `Send` call runs in its own goroutine (panics are caught and logged).
+  - `Adapter` — subscribes to a `StreamableRepository` and fans events out to registered `Plugin`s. Dispatches async plugins concurrently (panics caught and logged); sync plugins are called sequentially with context chaining. `dispatch` returns the final `context.Context`.
   - `ProviderFactory` / `Provider` — factory for constructing usage event objects; injectable via `ClientFeatureHubRepository.UsageProvider()`.
   - `ConvertFunc` — global hook for customising how feature values are stringified in usage events.
   - `ContextRecord` — `map[string]interface{}` alias for context attributes and additional event data.
@@ -130,7 +130,7 @@ config.RegisterUsagePlugin(myAnalyticsPlugin)
 Interceptors are functions registered with `Config.AddValueInterceptor(fn)` or `repo.AddValueInterceptor(fn)` that can override feature values before evaluation. The interceptor signature is:
 
 ```go
-type FeatureValueInterceptor func(ctx context.Context, key string, feature *models.FeatureState) (value interface{}, matched bool)
+type FeatureValueInterceptor func(ctx context.Context, key string, repo FeatureRepository, feature *models.FeatureState) (value interface{}, matched bool)
 ```
 
 **Note:** the return order is `(value, matched)` — value first, bool second.
