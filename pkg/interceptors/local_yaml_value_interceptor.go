@@ -43,7 +43,7 @@ type yamlOverrideEntry struct {
 //     value: '{"enabled": true}'
 func NewLocalYamlValueInterceptor(logger *logrus.Logger) interfaces.FeatureValueInterceptor {
 	overrides := loadOverrides(logger)
-	return func(context context.Context, key string, _ *models.FeatureState) (interface{}, bool) {
+	return func(context context.Context, key string, _ interfaces.FeatureRepository, _ *models.FeatureState) (interface{}, bool) {
 		if value, ok := overrides[key]; ok {
 			return value, true
 		}

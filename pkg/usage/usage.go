@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
@@ -244,9 +245,13 @@ func (c *BaseFeaturesCollection) SetFeatureValues(featureValues []*FeatureHubUsa
 // CollectUsageRecord merges additional data with feature key→value pairs.
 func (c *BaseFeaturesCollection) CollectUsageRecord() ContextRecord {
 	result := c.BaseUsageEvent.CollectUsageRecord()
+	keyJoin := make([]string, len(c.FeatureValues))
 	for _, fv := range c.FeatureValues {
 		result[fv.Key] = fv.Value
+		result[fv.Key+"_raw"] = fv.RawValue
+		keyJoin = append(keyJoin, fv.Key)
 	}
+	result["fhub_keys"] = strings.Join(keyJoin, ",")
 	return result
 }
 
@@ -318,6 +323,11 @@ func (c *BaseUsageNamedFeaturesCollection) EventName() string { return c.name }
 type Plugin interface {
 	DefaultPluginAttributes() ContextRecord
 	Send(context context.Context, event UsageEvent) context.Context
+	// CanSendAsync reports whether the plugin's Send method may be called in a
+	// separate goroutine. When true, the adapter fires Send concurrently and
+	// ignores its returned context. When false, Send is called synchronously and
+	// its returned context is threaded through to subsequent plugins.
+	CanSendAsync() bool
 }
 
 // Provider is a factory for creating usage events and values.

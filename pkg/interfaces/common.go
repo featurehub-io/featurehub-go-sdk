@@ -16,4 +16,4 @@ type ErrorFunc func(error, string, map[string]interface{})
 //
 // If a feature value override is provided and matched, regardless of strategies and context,
 // its value will be used.
-type FeatureValueInterceptor func(context context.Context, key string, feature *models.FeatureState) (value interface{}, matched bool)
+type FeatureValueInterceptor func(context context.Context, key string, repo FeatureRepository, feature *models.FeatureState) (value interface{}, matched bool)

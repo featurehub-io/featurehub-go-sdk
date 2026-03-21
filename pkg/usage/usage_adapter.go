@@ -29,7 +29,9 @@ func NewAdapter(repository StreamableRepository, logger *logrus.Logger) *Adapter
 		repository: repository,
 		logger:     logger,
 	}
-	a.handlerID = repository.RegisterUsageStream(a.dispatch)
+	a.handlerID = repository.RegisterUsageStream(func(ctx context.Context, event UsageEvent) {
+		a.dispatch(ctx, event)
+	})
 	return a
 }
 
@@ -43,15 +45,27 @@ func (a *Adapter) Close() {
 	a.repository.RemoveUsageStream(a.handlerID)
 }
 
-func (a *Adapter) dispatch(context context.Context, event UsageEvent) {
+func (a *Adapter) dispatch(ctx context.Context, event UsageEvent) context.Context {
 	for _, p := range a.plugins {
-		go func(p Plugin) {
-			defer func() {
-				if r := recover(); r != nil {
-					a.logger.WithField("panic", r).Error("usage plugin panicked during Send")
-				}
+		if p.CanSendAsync() {
+			go func(p Plugin) {
+				defer func() {
+					if r := recover(); r != nil {
+						a.logger.WithField("panic", r).Error("usage plugin panicked during Send")
+					}
+				}()
+				p.Send(ctx, event)
+			}(p)
+		} else {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						a.logger.WithField("panic", r).Error("usage plugin panicked during Send")
+					}
+				}()
+				ctx = p.Send(ctx, event)
 			}()
-			p.Send(context, event)
-		}(p)
+		}
 	}
+	return ctx
 }

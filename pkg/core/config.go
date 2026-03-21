@@ -69,6 +69,7 @@ type passiveRestPollPlugin struct {
 }
 
 func (p *passiveRestPollPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
+func (p *passiveRestPollPlugin) CanSendAsync() bool                           { return true }
 
 func (p *passiveRestPollPlugin) Send(ctx context.Context, _ usage.UsageEvent) context.Context {
 	if p.config.client != nil && p.config.requestedEdgeType == models.EdgePassiveRest {

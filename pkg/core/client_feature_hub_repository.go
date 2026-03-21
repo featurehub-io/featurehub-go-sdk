@@ -160,7 +160,7 @@ func (r *ClientFeatureHubRepository) GetFeature(context context.Context, key str
 	// regardless of whether we found it or not, we need to walk the interceptors passing what we found
 	if r.valueInterceptors != nil {
 		for _, valueInterceptor := range r.valueInterceptors {
-			if value, matched := valueInterceptor(context, key, feature); matched {
+			if value, matched := valueInterceptor(context, key, r, feature); matched {
 				r.logger.WithField("key", key).Trace("Found matching interceptor")
 				return feature, matched, value, nil
 			}

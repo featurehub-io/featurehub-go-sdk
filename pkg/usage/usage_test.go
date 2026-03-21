@@ -171,15 +171,37 @@ func TestUsageFeaturesCollectionEventName(t *testing.T) {
 func TestUsageFeaturesCollectionCollectUsageRecord(t *testing.T) {
 	c := NewUsageFeaturesCollection("", nil)
 	c.SetFeatureValues([]*FeatureHubUsageValue{
-		{ID: "1", Key: "flag-a", Value: "on"},
-		{ID: "2", Key: "flag-b", Value: "hello"},
+		{ID: "1", Key: "flag-a", Value: "on", RawValue: true},
+		{ID: "2", Key: "flag-b", Value: "hello", RawValue: "hello"},
 	})
 	c.SetAdditionalData(ContextRecord{"extra": "data"})
 
 	rec := c.CollectUsageRecord()
 	assert.Equal(t, "on", rec["flag-a"])
+	assert.Equal(t, true, rec["flag-a_raw"])
 	assert.Equal(t, "hello", rec["flag-b"])
+	assert.Equal(t, "hello", rec["flag-b_raw"])
 	assert.Equal(t, "data", rec["extra"])
+	assert.Equal(t, "flag-a,flag-b", rec["fhub_keys"])
+}
+
+func TestUsageFeaturesCollectionFhubKeysEmptyWhenNoFeatures(t *testing.T) {
+	c := NewUsageFeaturesCollection("", nil)
+
+	rec := c.CollectUsageRecord()
+	assert.Equal(t, "", rec["fhub_keys"])
+}
+
+func TestUsageFeaturesCollectionSingleFeatureRaw(t *testing.T) {
+	c := NewUsageFeaturesCollection("", nil)
+	c.SetFeatureValues([]*FeatureHubUsageValue{
+		{ID: "1", Key: "flag", Value: "off", RawValue: false},
+	})
+
+	rec := c.CollectUsageRecord()
+	assert.Equal(t, "off", rec["flag"])
+	assert.Equal(t, false, rec["flag_raw"])
+	assert.Equal(t, "flag", rec["fhub_keys"])
 }
 
 // --- BaseCollectionContext ---
@@ -197,12 +219,14 @@ func TestUsageFeaturesCollectionContextUserKey(t *testing.T) {
 func TestUsageFeaturesCollectionContextCollectUsageRecord(t *testing.T) {
 	c := NewUsageFeaturesCollectionContext("", nil)
 	c.SetFeatureValues([]*FeatureHubUsageValue{
-		{ID: "1", Key: "flag-x", Value: "off"},
+		{ID: "1", Key: "flag-x", Value: "off", RawValue: false},
 	})
 	c.SetContextAttributes(ContextRecord{"country": "Thailand"})
 
 	rec := c.CollectUsageRecord()
 	assert.Equal(t, "off", rec["flag-x"])
+	assert.Equal(t, false, rec["flag-x_raw"])
+	assert.Equal(t, "flag-x", rec["fhub_keys"])
 	assert.Equal(t, "Thailand", rec["country"])
 }
 
@@ -216,13 +240,15 @@ func TestUsageNamedFeaturesCollectionEventName(t *testing.T) {
 func TestUsageNamedFeaturesCollectionCollectUsageRecord(t *testing.T) {
 	c := NewUsageNamedFeaturesCollection("checkout", "orm", ContextRecord{"session": "s1"})
 	c.SetFeatureValues([]*FeatureHubUsageValue{
-		{ID: "1", Key: "promo", Value: "on"},
+		{ID: "1", Key: "promo", Value: "on", RawValue: true},
 	})
 	c.SetContextAttributes(ContextRecord{"device": "mobile"})
 
 	rec := c.CollectUsageRecord()
 	assert.Equal(t, "s1", rec["session"])
 	assert.Equal(t, "on", rec["promo"])
+	assert.Equal(t, true, rec["promo_raw"])
+	assert.Equal(t, "promo", rec["fhub_keys"])
 	assert.Equal(t, "mobile", rec["device"])
 	assert.Equal(t, "orm", c.UserKey())
 }
@@ -302,6 +328,7 @@ func newMockPlugin() *mockPlugin {
 }
 
 func (p *mockPlugin) DefaultPluginAttributes() ContextRecord { return nil }
+func (p *mockPlugin) CanSendAsync() bool                     { return true }
 func (p *mockPlugin) Send(ctx context.Context, event UsageEvent) context.Context {
 	p.ch <- event
 	return ctx
@@ -395,4 +422,87 @@ func TestAdapterCloseRemovesHandler(t *testing.T) {
 type panickyPlugin struct{}
 
 func (*panickyPlugin) DefaultPluginAttributes() ContextRecord               { return nil }
+func (*panickyPlugin) CanSendAsync() bool                                   { return true }
 func (*panickyPlugin) Send(_ context.Context, _ UsageEvent) context.Context { panic("plugin error") }
+
+// syncPlugin is a synchronous plugin that records calls and optionally enriches the context.
+type syncPlugin struct {
+	called bool
+	ctxKey string
+	ctxVal interface{}
+}
+
+func (p *syncPlugin) DefaultPluginAttributes() ContextRecord { return nil }
+func (p *syncPlugin) CanSendAsync() bool                     { return false }
+func (p *syncPlugin) Send(ctx context.Context, _ UsageEvent) context.Context {
+	p.called = true
+	if p.ctxKey != "" {
+		return context.WithValue(ctx, p.ctxKey, p.ctxVal)
+	}
+	return ctx
+}
+
+// syncPanickyPlugin is a synchronous plugin that panics on Send.
+type syncPanickyPlugin struct{}
+
+func (*syncPanickyPlugin) DefaultPluginAttributes() ContextRecord               { return nil }
+func (*syncPanickyPlugin) CanSendAsync() bool                                   { return false }
+func (*syncPanickyPlugin) Send(_ context.Context, _ UsageEvent) context.Context { panic("sync panic") }
+
+func TestAdapterSyncPluginIsCalledSynchronously(t *testing.T) {
+	repo := newMockRepo()
+	adapter := NewAdapter(repo, newTestLogger())
+	plugin := &syncPlugin{}
+	adapter.RegisterPlugin(plugin)
+
+	fv := &FeatureHubUsageValue{ID: "1", Key: "f", Value: "on"}
+	repo.emit(NewUsageEventWithFeature(fv, nil, ""))
+
+	// No goroutine — plugin.called must be true immediately after emit returns.
+	assert.True(t, plugin.called)
+}
+
+func TestAdapterSyncPluginContextThreadedToNextPlugin(t *testing.T) {
+	repo := newMockRepo()
+	adapter := NewAdapter(repo, newTestLogger())
+
+	first := &syncPlugin{ctxKey: "key", ctxVal: "value"}
+	second := &syncPlugin{}
+	adapter.RegisterPlugin(first)
+	adapter.RegisterPlugin(second)
+
+	// Manually call dispatch to inspect the returned context.
+	fv := &FeatureHubUsageValue{ID: "1", Key: "f", Value: "on"}
+	event := NewUsageEventWithFeature(fv, nil, "")
+	resultCtx := adapter.dispatch(context.Background(), event)
+
+	assert.True(t, first.called)
+	assert.True(t, second.called)
+	assert.Equal(t, "value", resultCtx.Value("key"))
+}
+
+func TestAdapterSyncPanicDoesNotStopSubsequentPlugins(t *testing.T) {
+	repo := newMockRepo()
+	adapter := NewAdapter(repo, newTestLogger())
+
+	panicPlugin := &syncPanickyPlugin{}
+	goodPlugin := &syncPlugin{}
+	adapter.RegisterPlugin(panicPlugin)
+	adapter.RegisterPlugin(goodPlugin)
+
+	fv := &FeatureHubUsageValue{ID: "1", Key: "f", Value: "on"}
+	repo.emit(NewUsageEventWithFeature(fv, nil, ""))
+
+	assert.True(t, goodPlugin.called)
+}
+
+func TestAdapterDispatchReturnsFinalContext(t *testing.T) {
+	repo := newMockRepo()
+	adapter := NewAdapter(repo, newTestLogger())
+	adapter.RegisterPlugin(&syncPlugin{ctxKey: "step", ctxVal: 1})
+
+	fv := &FeatureHubUsageValue{ID: "1", Key: "f", Value: "on"}
+	ctx := adapter.dispatch(context.Background(), NewUsageEventWithFeature(fv, nil, ""))
+
+	assert.Equal(t, 1, ctx.Value("step"))
+}
