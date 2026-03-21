@@ -246,10 +246,10 @@ func (c *BaseFeaturesCollection) SetFeatureValues(featureValues []*FeatureHubUsa
 func (c *BaseFeaturesCollection) CollectUsageRecord() ContextRecord {
 	result := c.BaseUsageEvent.CollectUsageRecord()
 	keyJoin := make([]string, len(c.FeatureValues))
-	for _, fv := range c.FeatureValues {
+	for idx, fv := range c.FeatureValues {
 		result[fv.Key] = fv.Value
 		result[fv.Key+"_raw"] = fv.RawValue
-		keyJoin = append(keyJoin, fv.Key)
+		keyJoin[idx] = fv.Key
 	}
 	result["fhub_keys"] = strings.Join(keyJoin, ",")
 	return result
