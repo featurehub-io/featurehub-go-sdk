@@ -181,26 +181,29 @@ Multiple interceptors can be registered; they are evaluated in registration orde
 
 The `pkg/interceptors` package provides `NewLocalYamlValueInterceptor`, which reads overrides from a YAML file at initialisation time. This is convenient for local development where you want to force specific feature values without touching the server.
 
-The file path is taken from the `FEATUREHUB_OVERRIDES` environment variable. If the variable is not set, it defaults to `featurehub-overrides.yaml` in the working directory.
+The file path is resolved in order:
+1. An explicit path passed as the second argument to `NewLocalYamlValueInterceptor`
+2. The `FEATUREHUB_LOCAL_YAML` environment variable
+3. `featurehub-features.yaml` in the working directory
 
-**YAML file format** — a list of entries, each with `key`, `type`, and `value`:
+**YAML file format** — a single `flagValues` map of feature key to value. Types are inferred automatically:
+
+| Value in YAML | Inferred type |
+|---------------|---------------|
+| `true` / `false` | BOOLEAN |
+| integer or float | NUMBER (`float64`) |
+| string | STRING |
+| map or sequence | JSON (serialised to a JSON string) |
 
 ```yaml
-- key: myBoolFlag
-  type: BOOLEAN
-  value: true
-- key: maxRetries
-  type: NUMBER
-  value: 5
-- key: welcomeMessage
-  type: STRING
-  value: "Hello, world!"
-- key: configJson
-  type: JSON
-  value: '{"timeout": 30}'
+flagValues:
+  darkMode: true
+  maxRetries: 5
+  welcomeMessage: "Hello, world!"
+  config:
+    timeout: 30
+    retries: 3
 ```
-
-`type` must match the FeatureHub value type (`BOOLEAN`, `NUMBER`, `STRING`, or `JSON`). Values are converted to the correct Go type at startup; invalid entries are logged and skipped.
 
 **Registering the interceptor:**
 
@@ -214,11 +217,10 @@ fhConfig.AddValueInterceptor(interceptors.NewLocalYamlValueInterceptor(logger))
 fhConfig.Connect()
 ```
 
-Or, pointing at a specific file:
+Or, passing an explicit file path:
 
 ```go
-os.Setenv("FEATUREHUB_OVERRIDES", "/etc/myapp/feature-overrides.yaml")
-fhConfig.AddValueInterceptor(interceptors.NewLocalYamlValueInterceptor(logger))
+fhConfig.AddValueInterceptor(interceptors.NewLocalYamlValueInterceptor(logger, "/etc/myapp/feature-overrides.yaml"))
 ```
 
 #### Writing your own interceptor
