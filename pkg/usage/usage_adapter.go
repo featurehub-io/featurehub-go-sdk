@@ -40,9 +40,12 @@ func (a *Adapter) RegisterPlugin(plugin Plugin) {
 	a.plugins = append(a.plugins, plugin)
 }
 
-// Close unregisters the adapter from the repository's usage stream.
+// Close unregisters the adapter from the repository's usage stream and closes all plugins.
 func (a *Adapter) Close() {
 	a.repository.RemoveUsageStream(a.handlerID)
+	for _, p := range a.plugins {
+		p.Close()
+	}
 }
 
 func (a *Adapter) dispatch(ctx context.Context, event UsageEvent) context.Context {

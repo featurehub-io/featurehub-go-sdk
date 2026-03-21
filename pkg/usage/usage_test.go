@@ -329,6 +329,7 @@ func newMockPlugin() *mockPlugin {
 
 func (p *mockPlugin) DefaultPluginAttributes() ContextRecord { return nil }
 func (p *mockPlugin) CanSendAsync() bool                     { return true }
+func (p *mockPlugin) Close()                                 {}
 func (p *mockPlugin) Send(ctx context.Context, event UsageEvent) context.Context {
 	p.ch <- event
 	return ctx
@@ -423,6 +424,7 @@ type panickyPlugin struct{}
 
 func (*panickyPlugin) DefaultPluginAttributes() ContextRecord               { return nil }
 func (*panickyPlugin) CanSendAsync() bool                                   { return true }
+func (*panickyPlugin) Close()                                               {}
 func (*panickyPlugin) Send(_ context.Context, _ UsageEvent) context.Context { panic("plugin error") }
 
 // syncPlugin is a synchronous plugin that records calls and optionally enriches the context.
@@ -434,6 +436,7 @@ type syncPlugin struct {
 
 func (p *syncPlugin) DefaultPluginAttributes() ContextRecord { return nil }
 func (p *syncPlugin) CanSendAsync() bool                     { return false }
+func (p *syncPlugin) Close()                                 {}
 func (p *syncPlugin) Send(ctx context.Context, _ UsageEvent) context.Context {
 	p.called = true
 	if p.ctxKey != "" {
@@ -447,6 +450,7 @@ type syncPanickyPlugin struct{}
 
 func (*syncPanickyPlugin) DefaultPluginAttributes() ContextRecord               { return nil }
 func (*syncPanickyPlugin) CanSendAsync() bool                                   { return false }
+func (*syncPanickyPlugin) Close()                                               {}
 func (*syncPanickyPlugin) Send(_ context.Context, _ UsageEvent) context.Context { panic("sync panic") }
 
 func TestAdapterSyncPluginIsCalledSynchronously(t *testing.T) {

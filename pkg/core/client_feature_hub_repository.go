@@ -136,6 +136,15 @@ func (r *ClientFeatureHubRepository) AddValueInterceptor(valueInterceptor interf
 	r.valueInterceptors = append(r.valueInterceptors, valueInterceptor)
 }
 
+// Close calls Close on every registered value interceptor, releasing their resources.
+func (r *ClientFeatureHubRepository) Close() {
+	for _, interceptor := range r.valueInterceptors {
+		if interceptor.Close != nil {
+			interceptor.Close()
+		}
+	}
+}
+
 func (r *ClientFeatureHubRepository) AllKeys() []string {
 	r.featuresMutex.Lock()
 
@@ -160,7 +169,7 @@ func (r *ClientFeatureHubRepository) GetFeature(context context.Context, key str
 	// regardless of whether we found it or not, we need to walk the interceptors passing what we found
 	if r.valueInterceptors != nil {
 		for _, valueInterceptor := range r.valueInterceptors {
-			if value, matched := valueInterceptor(context, key, r, feature); matched {
+			if value, matched := valueInterceptor.Intercept(context, key, r, feature); matched {
 				r.logger.WithField("key", key).Trace("Found matching interceptor")
 				return feature, matched, value, nil
 			}

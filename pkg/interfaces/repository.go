@@ -137,4 +137,5 @@ type InternalRepository interface {
 	WithContext(context *models.Context) Context
 	IsReady() bool                                                                         // Is the repository ready, does it have its initial state?
 	ReadinessListener(context context.Context, callbackFunc func(context context.Context)) // Configure the SDK with a function to call when we're ready (up and running with some data)
+	Close()                                                                                // Close calls Close on all registered value interceptors.
 }

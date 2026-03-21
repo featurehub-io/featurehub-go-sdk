@@ -328,6 +328,9 @@ type Plugin interface {
 	// ignores its returned context. When false, Send is called synchronously and
 	// its returned context is threaded through to subsequent plugins.
 	CanSendAsync() bool
+	// Close releases any resources held by the plugin (e.g. network connections,
+	// background goroutines). Called by the Adapter when it is closed.
+	Close()
 }
 
 // Provider is a factory for creating usage events and values.

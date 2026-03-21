@@ -25,6 +25,7 @@ func newChanPlugin() *chanPlugin {
 
 func (p *chanPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
 func (p *chanPlugin) CanSendAsync() bool                           { return true }
+func (p *chanPlugin) Close()                                       {}
 func (p *chanPlugin) Send(ctx context.Context, event usage.UsageEvent) context.Context {
 	p.ch <- event
 	return ctx

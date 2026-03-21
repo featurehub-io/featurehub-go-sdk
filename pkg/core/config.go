@@ -70,6 +70,7 @@ type passiveRestPollPlugin struct {
 
 func (p *passiveRestPollPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
 func (p *passiveRestPollPlugin) CanSendAsync() bool                           { return true }
+func (p *passiveRestPollPlugin) Close()                                       {}
 
 func (p *passiveRestPollPlugin) Send(ctx context.Context, _ usage.UsageEvent) context.Context {
 	if p.config.client != nil && p.config.requestedEdgeType == models.EdgePassiveRest {
@@ -106,14 +107,20 @@ func (c *Config) SetRepository(repository *ClientFeatureHubRepository) {
 }
 
 func (c *Config) closeEdge() {
-	c.Close()
-}
-
-// Close shuts down the active edge client, if any, and clears the reference.
-func (c *Config) Close() {
 	if c.client != nil {
 		c.client.Close()
 		c.client = nil
+	}
+}
+
+// Close shuts down the edge client and releases all interceptors and plugins.
+func (c *Config) Close() {
+	c.closeEdge()
+	if c.repository != nil {
+		c.repository.Close()
+	}
+	if c.usageAdapter != nil {
+		c.usageAdapter.Close()
 	}
 }
 

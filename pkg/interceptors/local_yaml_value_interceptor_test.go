@@ -43,7 +43,7 @@ func TestNoFileReturnsNonMatchingInterceptor(t *testing.T) {
 	t.Setenv(localYamlEnvVar, filepath.Join(t.TempDir(), "does-not-exist.yaml"))
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	value, matched := interceptor(context.TODO(), "anyKey", nil, nil)
+	value, matched := interceptor.Intercept(context.TODO(), "anyKey", nil, nil)
 
 	assert.False(t, matched)
 	assert.Nil(t, value)
@@ -56,7 +56,7 @@ func TestMissingFlagValuesFieldReturnsNoMatch(t *testing.T) {
 	setLocalYamlFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	_, matched := interceptor(context.TODO(), "anyKey", nil, nil)
+	_, matched := interceptor.Intercept(context.TODO(), "anyKey", nil, nil)
 	assert.False(t, matched)
 }
 
@@ -67,7 +67,7 @@ func TestUnknownKeyReturnsNoMatch(t *testing.T) {
 	setLocalYamlFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	value, matched := interceptor(context.TODO(), "unknown", nil, nil)
+	value, matched := interceptor.Intercept(context.TODO(), "unknown", nil, nil)
 
 	assert.False(t, matched)
 	assert.Nil(t, value)
@@ -80,7 +80,7 @@ func TestBooleanTrue(t *testing.T) {
 	setLocalYamlFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	value, matched := interceptor(context.TODO(), "flag", nil, nil)
+	value, matched := interceptor.Intercept(context.TODO(), "flag", nil, nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, true, value)
@@ -91,7 +91,7 @@ func TestBooleanFalse(t *testing.T) {
 	setLocalYamlFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	value, matched := interceptor(context.TODO(), "flag", nil, nil)
+	value, matched := interceptor.Intercept(context.TODO(), "flag", nil, nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, false, value)
@@ -104,7 +104,7 @@ func TestNumberInteger(t *testing.T) {
 	setLocalYamlFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	value, matched := interceptor(context.TODO(), "count", nil, nil)
+	value, matched := interceptor.Intercept(context.TODO(), "count", nil, nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, float64(42), value)
@@ -115,7 +115,7 @@ func TestNumberFloat(t *testing.T) {
 	setLocalYamlFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	value, matched := interceptor(context.TODO(), "ratio", nil, nil)
+	value, matched := interceptor.Intercept(context.TODO(), "ratio", nil, nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, float64(3.14), value)
@@ -128,7 +128,7 @@ func TestStringValue(t *testing.T) {
 	setLocalYamlFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	value, matched := interceptor(context.TODO(), "greeting", nil, nil)
+	value, matched := interceptor.Intercept(context.TODO(), "greeting", nil, nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, "hello world", value)
@@ -139,7 +139,7 @@ func TestStringEmptyValue(t *testing.T) {
 	setLocalYamlFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	value, matched := interceptor(context.TODO(), "label", nil, nil)
+	value, matched := interceptor.Intercept(context.TODO(), "label", nil, nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, "", value)
@@ -153,7 +153,7 @@ func TestComplexMapBecomesJSONString(t *testing.T) {
 	setLocalYamlFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	value, matched := interceptor(context.TODO(), "cfg", nil, nil)
+	value, matched := interceptor.Intercept(context.TODO(), "cfg", nil, nil)
 
 	assert.True(t, matched)
 	str, ok := value.(string)
@@ -167,7 +167,7 @@ func TestComplexSliceBecomesJSONString(t *testing.T) {
 	setLocalYamlFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	value, matched := interceptor(context.TODO(), "tags", nil, nil)
+	value, matched := interceptor.Intercept(context.TODO(), "tags", nil, nil)
 
 	assert.True(t, matched)
 	str, ok := value.(string)
@@ -182,15 +182,15 @@ func TestMultipleEntriesAllResolved(t *testing.T) {
 	setLocalYamlFile(t, writeYAML(t, yaml))
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	val, matched := interceptor(context.TODO(), "flagA", nil, nil)
+	val, matched := interceptor.Intercept(context.TODO(), "flagA", nil, nil)
 	assert.True(t, matched)
 	assert.Equal(t, true, val)
 
-	val, matched = interceptor(context.TODO(), "flagB", nil, nil)
+	val, matched = interceptor.Intercept(context.TODO(), "flagB", nil, nil)
 	assert.True(t, matched)
 	assert.Equal(t, float64(7), val)
 
-	val, matched = interceptor(context.TODO(), "flagC", nil, nil)
+	val, matched = interceptor.Intercept(context.TODO(), "flagC", nil, nil)
 	assert.True(t, matched)
 	assert.Equal(t, "hi", val)
 }
@@ -205,7 +205,7 @@ func TestExplicitPathTakesPrecedence(t *testing.T) {
 	explicitPath := writeYAML(t, "flagValues:\n  flag: true\n")
 	interceptor := NewLocalYamlValueInterceptor(newLogger(), explicitPath)
 
-	value, matched := interceptor(context.TODO(), "flag", nil, nil)
+	value, matched := interceptor.Intercept(context.TODO(), "flag", nil, nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, true, value)
@@ -218,7 +218,7 @@ func TestEnvVarPathIsUsedWhenNoExplicitPath(t *testing.T) {
 	setLocalYamlFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	value, matched := interceptor(context.TODO(), "fromEnv", nil, nil)
+	value, matched := interceptor.Intercept(context.TODO(), "fromEnv", nil, nil)
 
 	assert.True(t, matched)
 	assert.Equal(t, "yes", value)
@@ -232,7 +232,7 @@ func TestFeatureStateArgumentIsIgnored(t *testing.T) {
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
 	fs := &models.FeatureState{Key: "flag", Type: models.TypeBoolean, Value: false}
-	value, matched := interceptor(context.TODO(), "flag", nil, fs)
+	value, matched := interceptor.Intercept(context.TODO(), "flag", nil, fs)
 
 	assert.True(t, matched)
 	assert.Equal(t, true, value, "interceptor value should win over the stored feature state")
@@ -245,6 +245,6 @@ func TestMalformedYAMLReturnsNonMatchingInterceptor(t *testing.T) {
 	setLocalYamlFile(t, path)
 	interceptor := NewLocalYamlValueInterceptor(newLogger())
 
-	_, matched := interceptor(context.TODO(), "anyKey", nil, nil)
+	_, matched := interceptor.Intercept(context.TODO(), "anyKey", nil, nil)
 	assert.False(t, matched)
 }

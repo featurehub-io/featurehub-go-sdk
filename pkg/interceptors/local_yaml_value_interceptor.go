@@ -43,12 +43,12 @@ type localYamlFile struct {
 //	    retries: 3
 func NewLocalYamlValueInterceptor(logger *logrus.Logger, path ...string) interfaces.FeatureValueInterceptor {
 	overrides := loadLocalYaml(logger, path...)
-	return func(_ context.Context, key string, _ interfaces.FeatureRepository, _ *models.FeatureState) (interface{}, bool) {
+	return interfaces.NewInterceptor(func(_ context.Context, key string, _ interfaces.FeatureRepository, _ *models.FeatureState) (interface{}, bool) {
 		if value, ok := overrides[key]; ok {
 			return value, true
 		}
 		return nil, false
-	}
+	})
 }
 
 func loadLocalYaml(logger *logrus.Logger, paths ...string) map[string]interface{} {
