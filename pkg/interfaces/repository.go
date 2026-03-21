@@ -110,6 +110,7 @@ type FeatureHubConfig interface {
 	// Readiness
 	IsReady() bool
 	ReadinessListener(context context.Context, callbackFunc func(context context.Context))
+	IsClosed() bool
 
 	// Validation and metadata
 	Validate() error

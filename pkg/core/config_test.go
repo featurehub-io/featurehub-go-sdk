@@ -382,3 +382,98 @@ func TestConfigValidation(t *testing.T) {
 	// Now try a valid config:
 	assert.NoError(t, config.Validate())
 }
+
+// --- Closed config behaviour ---
+
+func newClosedConfig(t *testing.T) *Config {
+	t.Helper()
+	ep := EdgeProviderFunc(func(_ *Config, _ interfaces.InternalRepository) (interfaces.EdgeClient, error) {
+		return nil, errors.NewErrBadConfig("not needed")
+	})
+	cfg := NewConfig("http://server", "env/key*", ep)
+	cfg.SetRepository(NewClientFeatureHubRepository(cfg.Logger))
+	cfg.Close()
+	return cfg
+}
+
+func TestClosedConfigIsClosedTrue(t *testing.T) {
+	cfg := newClosedConfig(t)
+	assert.True(t, cfg.IsClosed())
+}
+
+func TestClosedConfigCloseIsIdempotent(t *testing.T) {
+	cfg := newClosedConfig(t)
+	assert.NotPanics(t, func() { cfg.Close() })
+	assert.True(t, cfg.IsClosed())
+}
+
+func TestClosedConfigNilsInternalReferences(t *testing.T) {
+	cfg := newClosedConfig(t)
+	assert.Nil(t, cfg.repository)
+	assert.Nil(t, cfg.usageAdapter)
+	assert.Nil(t, cfg.client)
+}
+
+func TestClosedConfigIsReadyFalse(t *testing.T) {
+	cfg := newClosedConfig(t)
+	assert.False(t, cfg.IsReady())
+}
+
+func TestClosedConfigReadinessListenerIsNoop(t *testing.T) {
+	cfg := newClosedConfig(t)
+	called := false
+	assert.NotPanics(t, func() {
+		cfg.ReadinessListener(context.Background(), func(_ context.Context) { called = true })
+	})
+	assert.False(t, called)
+}
+
+func TestClosedConfigConnectReturnsError(t *testing.T) {
+	cfg := newClosedConfig(t)
+	result, err := cfg.Connect()
+	assert.Nil(t, result)
+	require.Error(t, err)
+	assert.IsType(t, &errors.ErrConfigClosed{}, err)
+}
+
+func TestClosedConfigBuildReturnsError(t *testing.T) {
+	cfg := newClosedConfig(t)
+	result, err := cfg.Build(&models.Context{})
+	assert.Nil(t, result)
+	require.Error(t, err)
+	assert.IsType(t, &errors.ErrConfigClosed{}, err)
+}
+
+func TestClosedConfigNewContextReturnsNil(t *testing.T) {
+	cfg := newClosedConfig(t)
+	assert.Nil(t, cfg.NewContext())
+}
+
+func TestClosedConfigWithContextReturnsNil(t *testing.T) {
+	cfg := newClosedConfig(t)
+	assert.Nil(t, cfg.WithContext(&models.Context{}))
+}
+
+func TestClosedConfigAddValueInterceptorIsNoop(t *testing.T) {
+	cfg := newClosedConfig(t)
+	assert.NotPanics(t, func() {
+		cfg.AddValueInterceptor(interfaces.NewInterceptor(func(_ context.Context, _ string, _ interfaces.FeatureRepository, _ *models.FeatureState) (interface{}, bool) {
+			return nil, false
+		}))
+	})
+}
+
+func TestClosedConfigRegisterUsagePluginReturnsNil(t *testing.T) {
+	cfg := newClosedConfig(t)
+	plugin := newChanPlugin()
+	result := cfg.RegisterUsagePlugin(plugin)
+	assert.Nil(t, result)
+}
+
+func TestOpenConfigIsClosedFalse(t *testing.T) {
+	ep := EdgeProviderFunc(func(_ *Config, _ interfaces.InternalRepository) (interfaces.EdgeClient, error) {
+		return nil, errors.NewErrBadConfig("not needed")
+	})
+	cfg := NewConfig("http://server", "env/key*", ep)
+	assert.False(t, cfg.IsClosed())
+}

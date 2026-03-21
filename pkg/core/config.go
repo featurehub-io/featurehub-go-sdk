@@ -31,6 +31,7 @@ type Config struct {
 	requestedEdgeType models.EdgeType
 	timeout           time.Duration // timeout if using polling
 	client            interfaces.EdgeClient
+	closed            bool
 }
 
 // NewConfig returns a configured Config:
@@ -83,6 +84,9 @@ func (p *passiveRestPollPlugin) Send(ctx context.Context, _ usage.UsageEvent) co
 // you can have multiple connections ONLY if you have multiple instances of Config. All state is being evaluated on the server,
 // no strategies are being sent back to the client.
 func (c *Config) Build(context *models.Context) (interfaces.FeatureHubConfig, error) {
+	if c.closed {
+		return nil, errors.NewErrConfigClosed()
+	}
 	if c.ClientEvaluated() {
 		return c, nil
 	}
@@ -113,15 +117,27 @@ func (c *Config) closeEdge() {
 	}
 }
 
-// Close shuts down the edge client and releases all interceptors and plugins.
+// Close shuts down the edge client, releases all interceptors and plugins, nils all
+// internal references, and marks the config as closed. Idempotent.
 func (c *Config) Close() {
+	if c.closed {
+		return
+	}
+	c.closed = true
 	c.closeEdge()
 	if c.repository != nil {
 		c.repository.Close()
+		c.repository = nil
 	}
 	if c.usageAdapter != nil {
 		c.usageAdapter.Close()
+		c.usageAdapter = nil
 	}
+}
+
+// IsClosed reports whether Close has been called on this Config.
+func (c *Config) IsClosed() bool {
+	return c.closed
 }
 
 func (c *Config) PassiveRest(interval time.Duration) *Config {
@@ -150,14 +166,20 @@ func (c *Config) EdgeType() models.EdgeType {
 }
 
 // IsReady - Is the repository ready, does it have its initial state?
-// delegates to the internal repository
+// delegates to the internal repository. Returns false if the config has been closed.
 func (c *Config) IsReady() bool {
+	if c.closed {
+		return false
+	}
 	return c.checkRepository().IsReady()
 }
 
 // ReadinessListener - Configure the SDK with a function to call when we're ready (up and running with some data)
-// delegates to the internal repository
+// delegates to the internal repository. No-op if the config has been closed.
 func (c *Config) ReadinessListener(context context.Context, callbackFunc func(context context.Context)) {
+	if c.closed {
+		return
+	}
 	c.checkRepository().ReadinessListener(context, callbackFunc)
 }
 
@@ -181,11 +203,18 @@ func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
 
 // Connect prepares a repository and connects to the configured FH server:
 func (c *Config) Connect() (interfaces.FeatureHubConfig, error) {
+	if c.closed {
+		return nil, errors.NewErrConfigClosed()
+	}
 	return c.connect(nil)
 }
 
-// NewContext returns a ClientWithContext, with default context values:
+// NewContext returns a ClientWithContext, with default context values.
+// Returns nil if the config has been closed.
 func (c *Config) NewContext() interfaces.Context {
+	if c.closed {
+		return nil
+	}
 	return &ClientWithContext{
 		Context: &models.Context{
 			Custom: make(map[string]interface{}),
@@ -196,6 +225,9 @@ func (c *Config) NewContext() interfaces.Context {
 }
 
 func (c *Config) RegisterUsagePlugin(plugin usage.Plugin) interfaces.FeatureHubConfig {
+	if c.closed {
+		return nil
+	}
 	c.checkRepository()
 
 	c.usageAdapter.RegisterPlugin(plugin)
@@ -204,8 +236,11 @@ func (c *Config) RegisterUsagePlugin(plugin usage.Plugin) interfaces.FeatureHubC
 }
 
 // ensures the repositories are all set correctly and returns the internal one. for use by edge clients to
-// push data into the repository
+// push data into the repository. Returns nil if the config is closed.
 func (c *Config) checkRepository() interfaces.InternalRepository {
+	if c.closed {
+		return nil
+	}
 	if c.repository == nil {
 		c.SetRepository(NewClientFeatureHubRepository(c.Logger))
 	}
@@ -239,8 +274,12 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// WithContext Create a new context with passed context
+// WithContext creates a new context with the passed models.Context.
+// Returns nil if the config has been closed.
 func (c *Config) WithContext(context *models.Context) interfaces.Context {
+	if c.closed {
+		return nil
+	}
 	return &ClientWithContext{
 		Context:           context,
 		repository:        c.repository,
@@ -267,6 +306,9 @@ func (c *Config) WithWaitForData(value time.Duration) interfaces.FeatureHubConfi
 }
 
 func (c *Config) AddValueInterceptor(valueInterceptor interfaces.FeatureValueInterceptor) {
+	if c.closed {
+		return
+	}
 	c.checkRepository()
 	c.repository.AddValueInterceptor(valueInterceptor)
 }
