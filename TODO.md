@@ -8,10 +8,20 @@ Todo
 - [X] Compare versions when "feature" event is received (don't just overwrite)
 - [X] Allow notify / callback functions (add and remove)
 - [X] Global "readyness" callback (either OK when data has arrived, or an error if there was a fail)
-- [X] Analytics support
-- [X] Google Analytics support
 - [X] Removed support for server-side ClientContext, and submit this as an x-featurehub header upon connection
-- [ ] Run tests and code-generation inside Docker (instead of requiring Go to be installed locally)
+- [X] Dockerfile for building and running the todo-server
+- [ ] e2e tests using the javascript client image once Alex figures it out
+- [X] Feature Properties
+- [X] Polling should be able to handle multi SDK Keys
+- [ ] Can SSE server side eval be supported?
+- [X] Strategies should support arrays in the Context like the other SDKs
+- [X] Feature updates should deal with key changes, ID is the unique identifier internally
+- [X] Context changes are not tracked therefore server side evaluation is not properly supported
+- [X] Usage
+- [X] Usage should include the environment id
+- [X] Usage otel
+- [ ] Usage segment
+- [X] Check the percentage calc is the same in golang as everywhere else
 - [X] Client-side rollout strategies (https://github.com/featurehub-io/featurehub/tree/master/backend/sse-strategy-matchers/src)
 	- [x] Percentages [==, !=]
 	- [x] Country [==, !=]
@@ -27,12 +37,3 @@ Todo
 		- [x] boolean [==, !=]
 		- [x] ip-address [==, !=, excludes, includes]
 
-Strategy matching logic:
-- If strategy has a percentage then hash on userkey or session and decide
-- If the percentage doesn't match then continue with the next strategy
-- If percentage matches (or there is no percentage) then continue and iterate through the attributes
-	- If the attribute doesn't match then fall back and continue with the next strategy
-	- If attribute matches then continue and check the next attribute
-	- If all attributes match then we return the value from this strategy
-	- Otherwise continue with the next strategy
-- If no strategies match then return the default value for the feature

@@ -9,14 +9,44 @@ Features
 * Config type, with validation and defaults
 * StreamingClient implementation:
     - Features are made available through "Get" methods:
-        - `GetFeature` returns a whole feature (by key) with full metadata (but an untyped value)
         - `GetBoolean` returns a boolean feature (by key), or an error if it is unable to assert the value to a boolean
         - `GetNumber` / `GetRawJSON` / `GetString` as above
+      - Features are also made available through convenience functions:
+        - `Boolean(ctx, key, default), String(ctx, key, default), JSON(ctx, key, default), Number(ctx, key, default)` methods.
+        If the feature is not found or is in error they return the supplied default value.
     - Levelled Logging (you can choose how verbose to make this)
 	- Notifiers can be added for named feature keys, which will trigger a user-provided callback function whenever a feature with this key is updated
 	- Notifiers can be added ahead of time (before the client even knows about the feature-keys in question)
 * Custom errors (allows you to handle different errors in specific ways)
+* Usage analytics — automatic recording of feature evaluations with pluggable delivery
 
+
+Capabilities
+------------
+
+| Capability                                       | Go v 1.x | Go v 2.x |
+|--------------------------------------------------|:--------:|----------|
+| Streaming API feature updates (SSE)              |    Y     | Y        |
+| REST API by timer polling (GET feature updates)  |    N     | Y        |
+| REST API by usage/timeout (GET feature updates)  |    N     | Y        |
+| REST API one-off GET requests support            |    N     | Y        |
+| Test API (PUT requests to update feature values) |    N     | Y        |
+| Rollout Strategies - Server Evaluated            |    N     | Y (1)    |
+| Rollout Strategies - Client Evaluated            |    Y     | Y        |
+| Background Start                                 |    Y     | Y        |
+| Block until Start                                |    Y     | Y        |
+| Readiness Listeners                              |    Y     | Y        |
+| Feature Listeners                                |    Y     | Y        |
+| Feature Listener Removal                         |    Y     | Y        |
+| Usage Support                                    |    N     | Y        |
+| OpenTelemetry Usage Support                      |    N     | Y        |
+| Twilio Segment Usage Support                     |    N     | Y        |
+| Feature Overrides                                |    N     | Y        |
+| Fastly Polling Support                           |    N     | Y        |
+| Fastly SSE Support                               |    Y     | Y        |
+| Catch & Release                                  |    N     | N        |
+| Feature Interceptors                             |    N     | Y        |
+| Feature Properties                               |    N     | Y        |
 
 Usage
 -----
@@ -37,19 +67,32 @@ There are 3 steps to connecting:
 	}
 
 	// Get a context from this config:
-	fhClient := fhClient.NewContext()
+	fhClient := fhConfig.NewContext()
 ```
 
 ### Requesting Features
+
+All feature retrieval methods accept a `context.Context` as their first argument. Pass the request context from your HTTP handler (or `context.Background()` / `context.TODO()` where none is available) so that usage events carry the correct cancellation and tracing metadata.
+
 The client SDK offers various `Get` methods to retrieve different types of features:
-* `GetBoolean(key)`: returns a true or false
-* `GetRawJSON(key)`: returns a serialised JSON object
-* `GetNumber(key)`: returns a float64
-* `GetString(key)`: returns a string
+
+* `GetBoolean(ctx, key)`: returns a `bool` and an error
+* `GetRawJSON(ctx, key)`: returns a `*string` containing serialised JSON
+* `GetNumber(ctx, key)`: returns a `*float64`
+* `GetString(ctx, key)`: returns a `*string`
+
+Each of these returns an error if the key does not exist or the underlying data is not of the expected type. `GetBoolean` always returns a `bool`; the others return `nil` when the value is unset in the FeatureHub UI.
+
+If you prefer a simpler API with no error handling, use the convenience methods. They take an explicit default value returned when the feature is absent or in error:
+
+* `Boolean(ctx, key, defaultValue bool) bool`
+* `JSON(ctx, key, defaultValue string) string`
+* `Number(ctx, key, defaultValue float64) float64`
+* `String(ctx, key, defaultValue string) string`
 
 #### Retrieve a BOOLEAN value:
 ```go
-	someBoolean, err := fhClient.GetBoolean("booleanfeature")
+	someBoolean, err := fhClient.GetBoolean(r.Context(), "booleanfeature")
 	if err != nil {
 		log.Fatalf("Error retrieving a BOOLEAN feature: %s", err)
 	}
@@ -58,58 +101,313 @@ The client SDK offers various `Get` methods to retrieve different types of featu
 
 #### Retrieve a JSON value:
 ```go
-	someJSON, err := fhClient.GetRawJSON("jsonfeature")
+	someJSON, err := fhClient.GetRawJSON(r.Context(), "jsonfeature")
 	if err != nil {
 		log.Fatalf("Error retrieving a JSON feature: %s", err)
 	}
-	log.Printf("Retrieved a JSON feature: %s", someJSON)
+	// check if someJSON is nil before using
 ```
 
 #### Retrieve a NUMBER value:
 ```go
-	someNumber, err := fhClient.GetNumber("numberfeature")
+	someNumber, err := fhClient.GetNumber(r.Context(), "numberfeature")
 	if err != nil {
 		log.Fatalf("Error retrieving a NUMBER feature: %s", err)
 	}
-	log.Printf("Retrieved a NUMBER feature: %f", someNumber)
+	// check if someNumber is nil before using
 ```
 
 #### Retrieve a STRING value:
 ```go
-	someString, err := fhClient.GetString("stringfeature")
+	someString, err := fhClient.GetString(r.Context(), "stringfeature")
 	if err != nil {
 		log.Fatalf("Error retrieving a STRING feature: %s", err)
 	}
-    log.Printf("Retrieved a STRING feature: %s", someString)
+	// check if someString is nil before using
 ```
 
+#### Using convenience methods with a default value:
+```go
+	// Returns false if the flag is absent; no error to handle.
+	enabled := fhClient.Boolean(r.Context(), "darkMode", false)
+
+	// Returns 10.0 if the feature is absent or nil.
+	pageSize := fhClient.Number(r.Context(), "maxPageSize", 10.0)
+```
+
+
+### Feature Properties
+
+Features can carry an optional set of key/value string properties configured in the FeatureHub UI (serialised as `"fp"` in the JSON payload). These are useful for attaching metadata to a feature flag — for example a display name, a link to a ticket, or a tier label.
+
+```go
+	props := fhClient.Properties(r.Context(), "myfeature") // map[string]string, or nil if absent
+	if tier, ok := props["tier"]; ok {
+		log.Printf("Feature tier: %s", tier)
+	}
+```
+
+`Properties` is available on both `ClientWithContext` and directly on the repository.
+
+
+### Feature Value Interceptors
+
+A `FeatureValueInterceptor` lets you override the value returned for a feature key without modifying the server-side configuration. This is useful for local development overrides, test environments, or feature flag mocking.
+
+An interceptor is a function with the signature:
+
+```go
+type FeatureValueInterceptor func(ctx context.Context, key string, repo interfaces.FeatureRepository, feature *models.FeatureState) (value interface{}, matched bool)
+```
+
+Return `(value, true)` to supply an override, or `(nil, false)` to pass through to the normal evaluation. Note: value is the first return, matched bool is second. Interceptors are checked first, before rollout strategies are applied.
+
+Register an interceptor on the config before calling `Connect()`:
+
+```go
+fhConfig := client.New(serverAddress, apiKey)
+fhConfig.AddValueInterceptor(func(_ context.Context, key string, _ interfaces.FeatureRepository, _ *models.FeatureState) (interface{}, bool) {
+    if key == "myFlag" {
+        return true, true // always return true for this flag
+    }
+    return nil, false
+})
+fhConfig.Connect()
+```
+
+Multiple interceptors can be registered; they are evaluated in registration order and the first match wins.
+
+#### Local YAML overrides
+
+The `pkg/interceptors` package provides `NewLocalYamlValueInterceptor`, which reads overrides from a YAML file at initialisation time. This is convenient for local development where you want to force specific feature values without touching the server.
+
+The file path is resolved in order:
+1. An explicit path passed as the second argument to `NewLocalYamlValueInterceptor`
+2. The `FEATUREHUB_LOCAL_YAML` environment variable
+3. `featurehub-features.yaml` in the working directory
+
+**YAML file format** — a single `flagValues` map of feature key to value. Types are inferred automatically:
+
+| Value in YAML | Inferred type |
+|---------------|---------------|
+| `true` / `false` | BOOLEAN |
+| integer or float | NUMBER (`float64`) |
+| string | STRING |
+| map or sequence | JSON (serialised to a JSON string) |
+
+```yaml
+flagValues:
+  darkMode: true
+  maxRetries: 5
+  welcomeMessage: "Hello, world!"
+  config:
+    timeout: 30
+    retries: 3
+```
+
+**Registering the interceptor:**
+
+```go
+import (
+    "github.com/featurehub-io/featurehub-go-sdk/pkg/interceptors"
+)
+
+fhConfig := client.New(serverAddress, apiKey)
+fhConfig.AddValueInterceptor(interceptors.NewLocalYamlValueInterceptor(logger))
+fhConfig.Connect()
+```
+
+Or, passing an explicit file path:
+
+```go
+fhConfig.AddValueInterceptor(interceptors.NewLocalYamlValueInterceptor(logger, "/etc/myapp/feature-overrides.yaml"))
+```
+
+#### Writing your own interceptor
+
+Any function matching the `FeatureValueInterceptor` signature can be used. The `feature` argument is the current `FeatureState` from the repository (may be `nil` if the key is unknown). The returned `value` must be of the correct Go type for the feature (`bool`, `float64`, or `string`).
+
+```go
+func myInterceptor(_ context.Context, key string, _ interfaces.FeatureRepository, fs *models.FeatureState) (interface{}, bool) {
+    overrides := map[string]interface{}{
+        "darkMode":    true,
+        "maxPageSize": float64(50),
+    }
+    if v, ok := overrides[key]; ok {
+        return v, true
+    }
+    return nil, false
+}
+
+fhConfig.AddValueInterceptor(myInterceptor)
+```
 
 ### Configuring Notifiers (callbacks)
 The client SDK allows the user to define callback notifications which will be triggered whenever a specific feature key is updated.
 Notifiers can be defined at any time, even before the client has received data.
-* `AddNotifierBoolean(key string, callback func(bool))`: Calls the provided function with a boolean value
-* `AddNotifierFeature(key string, callback func(*models.FeatureState))`: Calls the provided function with a raw feature state
-* `AddNotifierJSON(key string, callback func(string))`: Calls the provided function with a JSON string value
-* `AddNotifierNumber(key string, callback func(float64))`: Calls the provided function with a float64 value
-* `AddNotifierString(key string, callback func(string))`: Calls the provided function with a string value
+
+All `AddNotifier*` methods accept a `context.Context` as their first argument, and the callback receives a `context.Context` as its first argument.
+
+* `AddNotifierBoolean(ctx, key string, callback func(context.Context, bool))`: Calls the provided function with a boolean value
+* `AddNotifierFeature(ctx, key string, callback func(context.Context, *models.FeatureState))`: Calls the provided function with a raw feature state
+* `AddNotifierJSON(ctx, key string, callback func(context.Context, string))`: Calls the provided function with a JSON string value
+* `AddNotifierNumber(ctx, key string, callback func(context.Context, float64))`: Calls the provided function with a float64 value
+* `AddNotifierString(ctx, key string, callback func(context.Context, string))`: Calls the provided function with a string value
 * `DeleteNotifier(key string) error`: Deletes any configured notifier for the given key (or returns an error if no notifier was found)
 
+```go
+fhClient.AddNotifierBoolean(ctx, "darkMode", func(ctx context.Context, value bool) {
+    log.Printf("darkMode changed to %v", value)
+})
+```
 
 ### Configuring a Readiness Listener
 The client SDK allows the user to define a callback function which will be triggered once, when the client first receives some data from the server.
-* `ReadinessListener(callback func())`: Sets the readiness listener to a specific user-provided function
+* `ReadinessListener(ctx context.Context, callback func(context.Context))`: Sets the readiness listener; both the registration call and the callback receive a context.
 
+```go
+fhConfig.ReadinessListener(ctx, func(ctx context.Context) {
+    log.Println("FeatureHub is ready")
+})
+```
+
+
+### HTTP Middleware and Context-Free API
+
+For HTTP handlers, the SDK provides a middleware and a context-free interface so you don't need to thread `context.Context` through every feature call.
+
+#### Middleware setup
+
+`core.ContextMiddleware` is standard Go HTTP middleware. It calls `fhConfig.NewContext()` for each request and stores the result in the request context under the `"featurehub"` key:
+
+```go
+import "github.com/featurehub-io/featurehub-go-sdk/pkg/core"
+
+r := mux.NewRouter() // or any http.Handler
+r.Use(core.ContextMiddleware(fhConfig))
+```
+
+Or manually with any router:
+
+```go
+r.Use(func(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        ctx := core.StoreInContext(r.Context(), fhConfig.NewContext())
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+})
+```
+
+#### Using `FeatureHubContext` in handlers
+
+Inside a handler, retrieve the context-free `FeatureHubContext` with `core.NewFromContext`. All feature methods are available without a `context.Context` parameter — the request context is captured automatically:
+
+```go
+func myHandler(w http.ResponseWriter, r *http.Request) {
+    hub, err := core.NewFromContext(r.Context())
+    if err != nil {
+        http.Error(w, "featurehub not configured", http.StatusInternalServerError)
+        return
+    }
+
+    if hub.Boolean("darkMode", false) {
+        // render dark theme
+    }
+
+    pageSize := hub.Number("maxPageSize", 10.0)
+    _ = pageSize
+}
+```
+
+`FeatureHubContext` mirrors the full `interfaces.Context` API but without `context.Context` parameters:
+- `GetBoolean(key)`, `GetNumber(key)`, `GetString(key)`, `GetRawJSON(key)`
+- `Boolean(key, default)`, `Number(key, default)`, `String(key, default)`, `JSON(key, default)`
+- `Properties(key)`, `AllKeys()`
+- `AddNotifierBoolean(key, callback)`, etc.
+- `RecordUsageEvent(event)`, `GetContextUsage()`, `RecordNamedUsage(name, params)`
+- `AsConvertibleString(key)` — returns the feature value as its string representation
+- `WithContext(ctx *models.Context) FeatureHubContext` — returns a new context with updated evaluation attributes
+
+### Testing with MockContext
+
+The `pkg/mocks` package provides `MockContext`, which implements `interfaces.Context` from a plain `map[string]interface{}`. Use it in unit tests to control exactly which feature values your code sees, without connecting to a FeatureHub server.
+
+```go
+import "github.com/featurehub-io/featurehub-go-sdk/pkg/mocks"
+
+ctx := mocks.NewMockContext(map[string]interface{}{
+    "darkMode":    true,
+    "maxPageSize": float64(25),
+    "welcomeMsg":  "Hello!",
+})
+```
+
+**Value types** must match what the tested code expects:
+
+| Feature type | Go type |
+|---|---|
+| BOOLEAN | `bool` |
+| NUMBER | `float64` |
+| STRING | `string` |
+| JSON | `string` |
+
+#### Get* methods
+
+Return the value and a `nil` error when the key is present and the type matches. Return an `ErrFeatureNotFound` if the key is absent, or `ErrInvalidType` if the stored value is the wrong Go type:
+
+```go
+enabled, err := ctx.GetBoolean(context.Background(), "darkMode")  // true, nil
+_, err = ctx.GetBoolean(context.Background(), "missing")           // false, ErrFeatureNotFound
+_, err = ctx.GetBoolean(context.Background(), "welcomeMsg")        // false, ErrInvalidType
+```
+
+#### Convenience methods
+
+Return the supplied default when the key is absent or the type is wrong — no error:
+
+```go
+enabled := ctx.Boolean(context.Background(), "darkMode", false)    // true
+size    := ctx.Number(context.Background(), "maxPageSize", 10.0)   // 25.0
+msg     := ctx.String(context.Background(), "missing", "default")  // "default"
+```
+
+#### Other behaviour
+
+- `AllKeys()` returns the keys present in the map at construction time.
+- `Properties()` always returns `nil`.
+- All `AddNotifier*` calls are no-ops that return `("", nil)`.
+- `WithContext()` returns the same mock (context attributes are ignored).
+- Usage methods (`RecordUsageEvent`, `GetContextUsage`, `RecordNamedUsage`) are no-ops.
+- `AsConvertibleString(ctx, key)` returns `fmt.Sprintf("%v", value)` for any stored value, or `ErrFeatureNotFound` if absent.
+
+#### Using MockContext in a test
+
+```go
+func TestMyHandler(t *testing.T) {
+    fhCtx := mocks.NewMockContext(map[string]interface{}{
+        "newCheckout": true,
+        "discount":    float64(15),
+    })
+
+    result := myBusinessLogic(context.Background(), fhCtx)
+
+    assert.Equal(t, "new-checkout", result.Template)
+    assert.Equal(t, 15.0, result.Discount)
+}
+```
+
+Where `myBusinessLogic` accepts `interfaces.Context`, you can swap in `MockContext` with no other changes to production code.
 
 ### Client-side rollout strategies
 Some rollout strategies need to be calculated per-request, which means that we can't rely on the server to do this for us. For this we provide the ability to apply a client context to a feature before using its value:
 
 ```go
 	// Add some values to the context:
-	fhClient.Country = "russia"
+	fhClient.Country = "thailand"
 	fhClient.Custom["test"] = true
 
 	// Now retrieved feature values will be evaluated against your context:
-	featureValue, err = fhClient.GetString("featureKey")
+	featureValue, err = fhClient.GetString(r.Context(), "featureKey")
 ```
 
 If you have a complex context then you can define it as a single struct:
@@ -125,7 +423,7 @@ If you have a complex context then you can define it as a single struct:
 		Custom: map[string]interface{}{
 			"startDate": "now",
 			"username":  "prawn",
-			"iteration", float64(5),
+			"iteration": float64(5),
 		},
 	}
 
@@ -133,7 +431,7 @@ If you have a complex context then you can define it as a single struct:
 	fhClient := fhConfig.WithContext(clientContext)
 
 	// Now retrieved feature values will be evaluated against your context:
-	featureValue, err = fhClient.GetString("featureKey")
+	featureValue, err = fhClient.GetString(r.Context(), "featureKey")
 ```
 
 If the featureValue has rollout strategies defined then they will be applied according to the client context you provide.
@@ -141,13 +439,272 @@ If the featureValue has rollout strategies defined then they will be applied acc
 Note the map of `Custom` values, which are evaluated against your custom features according to their field names (keys).
 
 
+Usage Analytics
+---------------
+
+The SDK includes a usage analytics subsystem (`pkg/usage`) that records feature evaluations and lets you deliver them to any analytics backend.
+
+### When usage is recorded automatically
+
+Every call to `GetBoolean`, `GetNumber`, `GetString`, or `GetRawJSON` on a `ClientWithContext` automatically emits a `BaseWithFeature` usage event. The event captures:
+
+- The feature key and its evaluated value (after strategy evaluation)
+- The user key (from `Context.Userkey` or `Context.Session`)
+- The full context attributes (device, platform, country, version, custom fields)
+- The environment-id of the environment the feature is from
+
+Usage is **not** emitted when:
+- The feature key is not found
+- A value interceptor matches on a key that does not exist in the repository
+
+### Registering a usage plugin
+
+A usage plugin is any type that implements the `usage.Plugin` interface:
+
+```go
+type Plugin interface {
+    DefaultPluginAttributes() usage.ContextRecord // return nil if unused
+    Send(ctx context.Context, event usage.UsageEvent) context.Context
+    CanSendAsync() bool
+}
+```
+
+Register your plugin with the config before calling `Connect()`:
+
+```go
+type MyAnalyticsPlugin struct{}
+
+func (p *MyAnalyticsPlugin) DefaultPluginAttributes() usage.ContextRecord { return nil }
+func (p *MyAnalyticsPlugin) CanSendAsync() bool                          { return true }
+
+func (p *MyAnalyticsPlugin) Send(ctx context.Context, event usage.UsageEvent) context.Context {
+    record := event.CollectUsageRecord()
+    // send record to your analytics backend
+    log.Printf("usage event for user=%s: %v", event.UserKey(), record)
+    return ctx
+}
+
+fhConfig := client.New(serverAddress, apiKey)
+fhConfig.RegisterUsagePlugin(&MyAnalyticsPlugin{})
+fhConfig.Connect()
+```
+
+Multiple plugins can be registered. When `CanSendAsync()` returns `true`, `Send` is called in its own goroutine and the returned context is discarded. When `CanSendAsync()` returns `false`, `Send` is called synchronously and its returned context is threaded through to subsequent plugins. Panics inside `Send` are caught and logged in both cases — one failing plugin does not affect others.
+
+### Passive REST and automatic polling on usage
+
+When using passive REST polling (`PassiveRest`), the SDK automatically triggers a `Poll()` call whenever a usage event is emitted. This means the feature cache is refreshed whenever your application processes a request, without requiring you to manage polling manually.
+
+```go
+fhConfig := client.New(serverAddress, apiKey)
+fhConfig.PassiveRest(5 * time.Minute) // max cache age
+fhConfig.Connect()
+
+// Each call to GetBoolean / GetString / etc. will trigger a background poll
+// if the cache has expired.
+ctx := fhConfig.NewContext()
+ctx.GetBoolean(context.Background(), "myFlag")
+```
+
+### Manually recording usage events
+
+You can emit your own usage events via the context at any point — for example to record a page view or a user action alongside feature data.
+
+#### Record a single named event with context
+
+`RecordNamedUsage` creates an event named after the first argument. It is automatically enriched with the current user key, all feature values, and context attributes:
+
+```go
+ctx.RecordNamedUsage(r.Context(), "page-view", usage.ContextRecord{
+    "page": "/checkout",
+    "referrer": "email-campaign",
+})
+```
+
+#### Record a full context snapshot
+
+`GetContextUsage` builds a snapshot of the entire feature state evaluated in the current context. You can enrich it and then emit it:
+
+```go
+snapshot := ctx.GetContextUsage(r.Context())
+ctx.RecordUsageEvent(r.Context(), snapshot)
+```
+
+#### Record a raw event
+
+You can construct and emit any `UsageEvent` directly:
+
+```go
+event := usage.NewUsageEventWithFeature(
+    usage.NewUsageValue("feature-id", "myFlag", "", true, models.TypeBoolean),
+    usage.ContextRecord{"page": "/home"},
+    "user-123",
+)
+ctx.RecordUsageEvent(r.Context(), event)
+```
+
+### Usage event types
+
+The `pkg/usage` package provides a hierarchy of event types. All embed `BaseUsageEvent` which carries the user key and optional additional data.
+
+| Type | Event name | Description |
+|------|-----------|-------------|
+| `BaseUsageEvent` | — | Base type; user key + free-form additional data |
+| `BaseWithFeature` | `"feature"` | Single feature evaluation: key, value, context attributes |
+| `BaseFeaturesCollection` | `"feature-collection"` | All feature values as a flat map |
+| `BaseCollectionContext` | `"feature-collection-context"` | All features + context attributes |
+| `UsageNamedFeaturesCollection` | _(custom)_ | Same as above but with a caller-supplied event name |
+
+`CollectUsageRecord()` on any event type returns a `map[string]interface{}` suitable for serialisation and delivery to an analytics backend.
+
+#### Automatic enrichment by `fillEvent`
+
+When an event is passed through `RecordUsageEvent` or `RecordNamedUsage`, the SDK inspects the event for optional interfaces and fills in fields automatically:
+
+- If the event implements `FeaturesCollection` (i.e. has `SetFeatureValues`), all current feature values evaluated in this context are injected.
+- If the event implements `CollectionContext` (i.e. has `SetContextAttributes`), the full context (device, platform, country, version, custom) is injected.
+- The user key is always set from the current context.
+
+This means `BaseCollectionContext` and `UsageNamedFeaturesCollection` receive all three automatically.
+
+
+Advanced Usage
+--------------
+
+### Customising value conversion with `ConvertFunc`
+
+By default, feature values are converted to strings for usage events as follows:
+
+- `BOOLEAN` → `"on"` / `"off"`
+- `STRING` → the string value as-is
+- `NUMBER` → formatted with `%g` (e.g. `"42"`, `"3.14"`)
+- `JSON` → omitted (empty string)
+
+You can replace this globally with `usage.SetConvertFunc`:
+
+```go
+usage.SetConvertFunc(func(value interface{}, valueType models.FeatureValueType) string {
+    if valueType == models.TypeBoolean {
+        if b, ok := value.(bool); ok && b {
+            return "enabled"
+        }
+        return "disabled"
+    }
+    // fall back to fmt.Sprintf for everything else
+    return fmt.Sprintf("%v", value)
+})
+
+// Reset to the default at any time:
+usage.SetConvertFunc(nil)
+```
+
+`SetConvertFunc` is goroutine-safe and takes effect immediately for all subsequent usage events.
+
+### Writing a custom `ProviderFactory`
+
+The `ProviderFactory` interface controls how usage event objects are constructed. The default implementation (`usage.DefaultProvider`) creates the standard event types described above. You can replace it entirely by implementing the interface:
+
+```go
+type ProviderFactory interface {
+    NewUsageValue(id, key string, value interface{}, valueType models.FeatureValueType) *FeatureHubUsageValue
+    NewUsageValueFromFeature(feature *models.FeatureState) *FeatureHubUsageValue
+    NewUsageFeature(feature *FeatureHubUsageValue, contextAttributes ContextRecord, userKey string) *BaseWithFeature
+    NewUsageCollectionEvent() *BaseFeaturesCollection
+    NewUsageContextCollectionEvent(userKey string) *BaseCollectionContext
+    NewNamedUsageCollection(name string, additionalData ContextRecord) *UsageNamedFeaturesCollection
+}
+```
+
+To inject your custom provider, create the repository explicitly and pass it to the config:
+
+```go
+type MyProvider struct{ usage.Provider } // embed default, override as needed
+
+func (p *MyProvider) NewUsageFeature(
+    feature *usage.FeatureHubUsageValue,
+    contextAttributes usage.ContextRecord,
+    userKey string,
+) *usage.BaseWithFeature {
+    event := usage.NewUsageEventWithFeature(feature, contextAttributes, userKey)
+    // enrich or wrap the event here
+    return event
+}
+
+repo := core.NewClientFeatureHubRepository(logger)
+// inject the provider — the repository exposes UsageProvider() for reading;
+// set the field directly since you own the repository before passing it to Config:
+// (extend ClientFeatureHubRepository or use SetRepository after creation)
+
+fhConfig := core.NewConfig(serverAddress, apiKey, edgeProvider)
+fhConfig.SetRepository(repo)
+```
+
+### Extending the built-in event structs
+
+All event types are ordinary Go structs and can be embedded to add custom fields. Use `RecordUsageEvent` to emit your own enriched events, and type-assert in your plugin's `Send`:
+
+```go
+// Define a custom event type embedding BaseWithFeature:
+type PageViewEvent struct {
+    usage.BaseWithFeature
+    Page    string
+    Campaign string
+}
+
+func (e *PageViewEvent) CollectUsageRecord() usage.ContextRecord {
+    record := e.BaseWithFeature.CollectUsageRecord()
+    record["page"] = e.Page
+    record["campaign"] = e.Campaign
+    return record
+}
+
+// Construct and emit:
+featureValue := usage.NewUsageValue("id", "myFlag", "", true, models.TypeBoolean)
+event := &PageViewEvent{
+    BaseWithFeature: *usage.NewUsageEventWithFeature(featureValue, nil, "user-123"),
+    Page:            "/checkout",
+    Campaign:        "summer-sale",
+}
+ctx.RecordUsageEvent(r.Context(), event)
+
+// In your plugin:
+func (p *MyPlugin) Send(ctx context.Context, e usage.UsageEvent) context.Context {
+    if pv, ok := e.(*PageViewEvent); ok {
+        // access pv.Page, pv.Campaign directly
+    }
+    // or use the generic path:
+    record := e.CollectUsageRecord()
+    _ = record
+    return ctx
+}
+```
+
+### Direct stream registration on the repository
+
+The repository itself exposes a lower-level stream API that bypasses the `Adapter` and plugin system entirely. This is useful for testing or for integrations that want synchronous delivery:
+
+```go
+repo := core.NewClientFeatureHubRepository(logger)
+
+id := repo.RegisterUsageStream(func(ctx context.Context, event usage.UsageEvent) {
+    // called synchronously on the goroutine that evaluated the feature
+    fmt.Println("event:", event.UserKey())
+})
+
+// Remove the stream when done:
+repo.RemoveUsageStream(id)
+```
+
+Note that `Adapter` (used by `RegisterUsagePlugin`) calls each plugin's `Send` according to its `CanSendAsync()` value — asynchronously in a goroutine when true, synchronously with context chaining when false. Direct stream handlers registered via `RegisterUsageStream` are always called synchronously.
+
 Setup using docker
 ----------------
-We have dockerfile, use below commands to setup 
+We have dockerfile which builds and runs the todo-server example, use below commands to setup
 ```
 1. docker build -t featurehub-go-sdk:v1 .
 2. docker run -p 8080:8080 featurehub-go-sdk:v1
 ```
+It is primarily used in our e2e testing.
 
 Further examples
 ----------------

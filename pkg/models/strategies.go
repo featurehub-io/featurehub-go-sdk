@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/strategies"
+	"github.com/google/uuid"
 	"github.com/spaolacci/murmur3"
 )
 
@@ -15,13 +16,19 @@ var (
 // Strategies so we can attach methods:
 type Strategies []Strategy
 
+type Applied struct {
+	Matched bool
+	Value   interface{}
+}
+
 // Strategy defines model for Strategy.
 type Strategy struct {
-	Attributes []*StrategyAttribute `json:"attributes"`
-	ID         string               `json:"id"`
-	Name       string               `json:"name"`
-	Percentage float64              `json:"percentage"`
-	Value      interface{}          `json:"value,omitempty"` // this value is used if it is a simple attribute or percentage. If it is more complex then the pairs are passed
+	Attributes           []*StrategyAttribute `json:"attributes"`
+	ID                   string               `json:"id"`
+	Name                 string               `json:"name"`
+	Percentage           int32                `json:"percentage"` // percentage is at most 1 million
+	PercentageAttributes *[]string            `json:"percentageAttributes"`
+	Value                interface{}          `json:"value,omitempty"` // this value is used if it is a simple attribute or percentage. If it is more complex then the pairs are passed
 }
 
 // StrategyAttribute defines a more complex strategy than simple percentages:
@@ -33,72 +40,118 @@ type StrategyAttribute struct {
 	Type        string        `json:"type"`
 }
 
+func (ss Strategies) getPercentageAttributes(cc *Context, percentageAttributes *[]string) string {
+	if percentageAttributes == nil || len(*percentageAttributes) == 0 {
+		if key, ok := cc.UniqueKey(); !ok {
+			cc.Session = uuid.New().String()
+			println(fmt.Sprintf("no percent attributes, using session and assigning `%s`", cc.Session))
+			return cc.Session
+		} else {
+			println(fmt.Sprintf("no percentage attributes, so using unique key `%s`", key))
+			return key
+		}
+	}
+
+	var pa = ""
+
+	for _, key := range *percentageAttributes {
+		if len(pa) > 0 {
+			pa += "$"
+		}
+
+		pa += cc.ForPercentage(key)
+	}
+
+	println(fmt.Sprintf("decoded percentage attribute string is `%s`", pa))
+
+	return pa
+}
+
 // Calculate contains the logic to check each strategy and decide which one applies (if any):
-func (ss Strategies) Calculate(clientContext *Context) interface{} {
+func (ss Strategies) Calculate(clientContext *Context, featureId string) (interface{}, bool) {
+	if clientContext == nil || len(ss) == 0 {
+		println("no context or strategies")
+		return nil, false
+	}
 
-	// Pre-calculate our hashKey:
-	hashKey, _ := clientContext.UniqueKey()
+	var percentage *int32 = nil
+	var percentageKey = ""
+	basePercentage := map[string]int32{}
+	_, hasDefaultPercentageKey := clientContext.UniqueKey()
 
-	// Go through the available strategies:
+	// Go through the available strategies
+	// remember each strategy can have a different set of percentage attributes, but the total percentage accumulated
+	// must be kept as we walk through.
 	for _, strategy := range ss {
 		logger.Tracef("Checking strategy (%s)", strategy.ID)
 
-		// Check if we match any percentage-based rule:
-		if !strategy.proceedWithPercentage(hashKey) {
-			logger.Tracef("Failed strategy (%s) percentage - trying next strategy", strategy.ID)
-			continue
+		hasNoAttributes := strategy.Attributes == nil || len(strategy.Attributes) == 0
+
+		if strategy.Percentage != 0 {
+			hasPercentageKeys := strategy.PercentageAttributes != nil && len(*strategy.PercentageAttributes) > 0
+
+			if hasDefaultPercentageKey || hasPercentageKeys {
+				newPercentageKey := ss.getPercentageAttributes(clientContext, strategy.PercentageAttributes) + featureId
+
+				if _, ok := basePercentage[newPercentageKey]; !ok {
+					logger.Tracef("strategy: not seen percentage key `%s`, storing new record", newPercentageKey)
+					basePercentage[newPercentageKey] = 0
+				}
+
+				basePercentageVal := basePercentage[newPercentageKey]
+
+				if percentage == nil || newPercentageKey != percentageKey {
+					percentageKey = newPercentageKey
+					percentage = new(int32(float64(murmur3.Sum32([]byte(newPercentageKey))) / maxMurmur32Hash * 1000000))
+
+				}
+
+				var useBasePercentage = int32(0)
+
+				if hasNoAttributes {
+					useBasePercentage = basePercentageVal
+				}
+
+				logger.Tracef("strategy: percentage %v needs to be below %v", *percentage, useBasePercentage+strategy.Percentage)
+				if *percentage <= (useBasePercentage + strategy.Percentage) {
+					// if we have no attributes, simply being a percentage matched so we return the strategy value
+					if hasNoAttributes {
+						logger.Trace("matched because no attributes")
+						return strategy.Value, true
+					}
+
+					// there are attributes, so they have to match as well
+					if strategy.proceedWithAttributes(clientContext) {
+						logger.Tracef("Matched strategy with percentage (%s:%s) (%v) with matching attributes", strategy.ID, strategy.Name, *percentage)
+						return strategy.Value, true
+					} else {
+						logger.Tracef("Matched percentage but did not match any attributes")
+					}
+				}
+
+				// if we had attributes, and they matched then we would have returned, but as they don't and the whole
+				// criteria didn't match, it didn't increase the percentage value. So we only increase the unconditional
+				// percentage value when there are no attributes
+				if hasNoAttributes {
+					basePercentage[percentageKey] += strategy.Percentage
+				}
+			}
 		}
 
-		// Check if we match the attribute-based rules:
-		if !strategy.proceedWithAttributes(clientContext) {
-			logger.Tracef("Failed strategy (%s) attributes - trying next strategy", strategy.ID)
-			continue
+		// even if it has a percentage, we could match on attributes
+		if !hasNoAttributes {
+			if strategy.proceedWithAttributes(clientContext) {
+				logger.Tracef("Matched strategy (%s:%s)", strategy.ID, strategy.Name)
+				return strategy.Value, true
+			}
 		}
-
-		// If we got this far then we matched this strategy, so we return its value:
-		logger.Debugf("Matched strategy (%s:%s)", strategy.ID, strategy.Name)
-		return strategy.Value
 	}
 
-	// Otherwise just return nil:
-	return nil
-}
-
-// proceedWithPercentage contains the logic to match percentage-based rules on a user-key / session-key hash:
-func (s Strategy) proceedWithPercentage(hashKey string) bool {
-
-	// Make sure we have a percentage rule:
-	if s.Percentage == 0 {
-		return true
-	}
-
-	// If we do have a rule, but don't have a hash-key then we can't continue with this strategy:
-	if len(hashKey) == 0 {
-		return false
-	}
-
-	// Murmur32 sum on the key gives us a consistent number:
-	hashedPercentage := float64(murmur3.Sum32([]byte(hashKey))) / maxMurmur32Hash * 1000000
-
-	// If our calculated percentage is less than the strategy percentage then we matched!
-	if hashedPercentage <= s.Percentage {
-		logger.Tracef("Matched percentage strategy (%s:%f = %v) for calculated percentage: %v\n", s.ID, s.Percentage, s.Value, hashedPercentage)
-		return true
-	}
-
-	logger.Debugf("Didn't match percentage strategy (%s:%f = %v) for calculated percentage: %v\n", s.ID, s.Percentage, s.Value, hashedPercentage)
-	return false
+	return nil, false
 }
 
 // proceedWithPercentage contains the logic to match attribute-based rules on the rest of the client context:
 func (s Strategy) proceedWithAttributes(clientContext *Context) bool {
-
-	// We can't continue without a clientContext:
-	if clientContext == nil {
-		logger.Trace("proceedWithAttributes() Received nil clientContext")
-		return false
-	}
-
 	for _, sa := range s.Attributes {
 
 		// Handle each different client-context attribute:
@@ -183,9 +236,9 @@ func (s Strategy) proceedWithAttributes(clientContext *Context) bool {
 				}
 				logger.Tracef("Didn't match custom strategy (%s:%s = %v) for version: %v\n", sa.ID, sa.FieldName, sa.Values, clientContext.Version)
 				return false
-			} else {
-				return false
 			}
+
+			return false
 		}
 	}
 

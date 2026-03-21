@@ -2,41 +2,33 @@ package streamingclient
 
 import (
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/donovanhide/eventsource"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/core"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
-	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/sirupsen/logrus"
 )
 
-// ErrorFunc is called when asynchronous errors are encountered:
-type ErrorFunc func(error, string, map[string]interface{})
-
-// StreamingClient implements the client interface by by subscribing to server-side events:
+// StreamingClient implements the client interface by subscribing to server-side events:
 type StreamingClient struct {
 	apiClient         *eventsource.Stream
-	config            *Config
-	fatalErrorHandler ErrorFunc
-	features          map[string]*models.FeatureState
-	featuresMutex     sync.Mutex
-	featuresURL       string
-	hasData           bool
+	config            *core.Config
+	fatalErrorHandler interfaces.ErrorFunc
 	isRunning         bool
+	stopped           bool
 	logger            *logrus.Logger
-	notifiers         notifiers
-	notifiersMutex    sync.Mutex
-	readinessListener func()
+	repository        interfaces.InternalRepository
 }
 
 // New wraps NewStreamingClient (as the default / only implementation):
-func New(config *Config) (*StreamingClient, error) {
-	return NewStreamingClient(config)
+func New(config *core.Config, repository interfaces.InternalRepository) (*StreamingClient, error) {
+	return NewStreamingClient(config, repository)
 }
 
 // NewStreamingClient prepares a new StreamingClient with given config:
-func NewStreamingClient(config *Config) (*StreamingClient, error) {
+func NewStreamingClient(config *core.Config, repository interfaces.InternalRepository) (*StreamingClient, error) {
 
 	// Check for nil config:
 	if config == nil {
@@ -48,18 +40,14 @@ func NewStreamingClient(config *Config) (*StreamingClient, error) {
 		return nil, err
 	}
 
-	// Make a logger:
-	logger := logrus.New()
-	logger.SetLevel(config.LogLevel)
-
 	// Set this logger in the models package (they use a global to keep the API simple):
-	SetLogger(logger)
+	SetLogger(config.Logger)
 
 	// Put this into a new StreamingClient:
 	client := &StreamingClient{
-		config:    config,
-		logger:    logger,
-		notifiers: make(notifiers),
+		config:     config,
+		logger:     config.Logger,
+		repository: repository,
 	}
 
 	// Use the default fatalErrorFunc to handle fatal errors:
@@ -69,7 +57,7 @@ func NewStreamingClient(config *Config) (*StreamingClient, error) {
 	logger.WithField("server_address", client.config.ServerAddress).Info("Subscribing to FeatureHub server")
 
 	// Prepare a custom HTTP request:
-	req, err := http.NewRequest("GET", config.featuresURL(), nil)
+	req, err := http.NewRequest("GET", config.FeaturesURL(), nil)
 	if err != nil {
 		client.logger.WithError(err).Error("Error preparing request")
 		return nil, err
@@ -86,18 +74,25 @@ func NewStreamingClient(config *Config) (*StreamingClient, error) {
 	return client, nil
 }
 
+// streaming client does not support server evaluated SSE
+func (c *StreamingClient) ContextChange(header string) {
+	// empty
+}
+
 // FatalErrorFunc is called when an unrecoverable asynchronous error is encountered:
 func (c *StreamingClient) fatalErrorFunc(err error, message string, details map[string]interface{}) {
 	c.logger.WithError(err).WithFields(details).Fatal(message)
 }
 
-// ReadinessListener defines a callback function which will be triggered once the client has received data for the first time:
-func (c *StreamingClient) ReadinessListener(callbackFunc func()) {
-	c.readinessListener = callbackFunc
-}
+// Poll - does nothing, its only used for PassiveRest
+func (c *StreamingClient) Poll() error { return nil }
 
 // Start begins handling events from the streamer:
-func (c *StreamingClient) Start() {
+func (c *StreamingClient) Connect() {
+	if c.stopped {
+		c.logger.Warn("StreamingClient has been closed and cannot be restarted")
+		return
+	}
 
 	// Set the isRunning flag:
 	c.isRunning = true
@@ -107,43 +102,22 @@ func (c *StreamingClient) Start() {
 	go c.handleErrors()
 
 	// Block until we have some data:
-	if c.config.WaitForData {
-		for !c.hasData {
+	if c.config.WaitForData != nil {
+		for !c.repository.IsReady() {
 			time.Sleep(time.Second)
 		}
 	}
 }
 
-// WithContext returns a ClientWithContext:
-func (c *StreamingClient) WithContext(context *models.Context) *ClientWithContext {
-	return &ClientWithContext{
-		Context: context,
-		client:  c,
-		config:  c.config,
-	}
+// Close shuts down the SSE connection and event handlers, and prevents reconnection.
+func (c *StreamingClient) Close() {
+	c.isRunning = false
+	c.stopped = true
+	c.apiClient.Close()
 }
 
 // WithFatalErrorHandler configures an error handler which will be called for asynchronous fatal errors:
-func (c *StreamingClient) WithFatalErrorHandler(fatalErrorFunc ErrorFunc) *StreamingClient {
+func (c *StreamingClient) WithFatalErrorHandler(fatalErrorFunc interfaces.ErrorFunc) *StreamingClient {
 	c.fatalErrorHandler = fatalErrorFunc
 	return c
-}
-
-// isReady triggers various notifications that the client is ready to serve data:
-func (c *StreamingClient) isReady() {
-
-	// If we're not already flagged as ready:
-	if !c.hasData {
-
-		// Flag us as ready:
-		c.hasData = true
-
-		// Trigger the registered readinessListener:
-		if c.readinessListener != nil {
-			c.logger.Trace("Calling readinessListener()")
-			c.readinessListener()
-		} else {
-			c.logger.Trace("No registered readinessListener() to call")
-		}
-	}
 }
