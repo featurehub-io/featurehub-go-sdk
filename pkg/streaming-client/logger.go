@@ -1,6 +1,5 @@
 package streamingclient
 
-
 import "github.com/sirupsen/logrus"
 
 // logger is a package-global logger which can be used by model methods (this prevents us having to pass a logger all over the place):

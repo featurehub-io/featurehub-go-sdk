@@ -6,12 +6,14 @@ import (
 
 // FeatureState defines model for FeatureState.
 type FeatureState struct {
-	ID         string           `json:"id,omitempty"`         // ID
-	Key        string           `json:"key,omitempty"`        // Name of the feature
-	Strategies Strategies       `json:"strategies,omitempty"` // Rollout strategy
-	Type       FeatureValueType `json:"type,omitempty"`       // Data type
-	Value      interface{}      `json:"value,omitempty"`      // the current value
-	Version    int64            `json:"version,omitempty"`    // Version
+	ID            string            `json:"id,omitempty"`            // ID, this field cannot be empty or nil
+	Key           string            `json:"key,omitempty"`           // Name of the feature, this field cannot be empty or nil
+	Strategies    Strategies        `json:"strategies,omitempty"`    // Rollout strategy, this can be nil or an empty array
+	Type          FeatureValueType  `json:"type,omitempty"`          // Data type, this field cannot be empty or nil
+	Value         interface{}       `json:"value,omitempty"`         // the current value, this field can be nil unless the Type is TypeBoolean in which case it will ALWAYS be true or false
+	Version       int64             `json:"version,omitempty"`       // Version, this field cannot be empty or nil
+	Properties    map[string]string `json:"fp,omitempty"`            // Properties from the server. Not supported in SaaS, but can be nil
+	EnvironmentID string            `json:"environmentId,omitempty"` // Environment this feature is set client side application.
 }
 
 // AsBoolean returns a boolean value for this feature:

@@ -2,11 +2,13 @@ package streamingclient
 
 import (
 	"bytes"
+	"context"
 	"testing"
+	"time"
 
 	"github.com/donovanhide/eventsource"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/core"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
-	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
@@ -14,8 +16,9 @@ import (
 func TestStreamingClientHandlers(t *testing.T) {
 
 	// Make a test config (with an incorrect server address):
-	config := &Config{
-		WaitForData: true,
+	config := &core.Config{
+		WaitForData: new(time.Hour),
+		SDKKey:      "environment-id/api-key",
 	}
 
 	// Make a logger:
@@ -24,38 +27,40 @@ func TestStreamingClientHandlers(t *testing.T) {
 	logBuffer := new(bytes.Buffer)
 	logger.SetOutput(logBuffer)
 
+	repository := core.NewClientFeatureHubRepository(logger)
+
 	// Use the config to make a new StreamingClient with a mock apiClient::
 	client := &StreamingClient{
 		apiClient: &eventsource.Stream{
 			Errors: make(chan error, 100),
 			Events: make(chan eventsource.Event, 100),
 		},
-		config:   config,
-		features: make(map[string]*models.FeatureState),
-		logger:   logger,
+		config:     config,
+		logger:     logger,
+		repository: repository,
 	}
 
 	// Load the mock apiClient up with a "feature" event:
 	client.apiClient.Events <- &testEvent{
-		data:  `{"key":"anotherfeature","type":"BOOLEAN","value":false,"version":3}`,
+		data:  `{"id":"id-anotherfeature","key":"anotherfeature","type":"BOOLEAN","value":false,"version":3}`,
 		event: "feature",
 	}
 
 	// Load the mock apiClient up with a "feature" event (but with an out-of-sync version):
 	client.apiClient.Events <- &testEvent{
-		data:  `{"key":"anotherfeature","type":"BOOLEAN","value":false,"version":2}`,
+		data:  `{"id":"id-anotherfeature","key":"anotherfeature","type":"BOOLEAN","value":false,"version":2}`,
 		event: "feature",
 	}
 
 	// Load the mock apiClient up with a "feature" event (which we'll delete):
 	client.apiClient.Events <- &testEvent{
-		data:  `{"key":"featuretodelete","type":"BOOLEAN","value":true}`,
+		data:  `{"id":"id-featuretodelete","key":"featuretodelete","type":"BOOLEAN","value":true}`,
 		event: "feature",
 	}
 
 	// Load the mock apiClient up with a "delete_feature" event:
 	client.apiClient.Events <- &testEvent{
-		data:  `{"key":"featuretodelete","type":"BOOLEAN","value":false,"version":2}`,
+		data:  `{"id":"id-featuretodelete","key":"featuretodelete","type":"BOOLEAN","value":false,"version":2}`,
 		event: "delete_feature",
 	}
 
@@ -66,15 +71,16 @@ func TestStreamingClientHandlers(t *testing.T) {
 	}
 
 	// Start handling events:
-	client.Start()
+	client.Connect()
 
 	// Make sure new features with old versions don't clobber values:
-	anotherFeature, err := client.GetFeature("anotherfeature")
+	anotherFeature, _, _, err := repository.GetFeature(context.TODO(), "anotherfeature")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(3), anotherFeature.Version)
+	assert.Equal(t, "environment-id", anotherFeature.EnvironmentID)
 
 	// Make sure features get deleted:
-	deletedFeature, err := client.GetFeature("featuretodelete")
+	deletedFeature, _, _, err := repository.GetFeature(context.TODO(), "featuretodelete")
 	assert.Error(t, err)
 	assert.IsType(t, &errors.ErrFeatureNotFound{}, err)
 	assert.Nil(t, deletedFeature)

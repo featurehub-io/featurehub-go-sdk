@@ -3,4 +3,4 @@ Examples
 
 Examples of how to use the FeatureHub GoLang SDK
 
-- [http-service](./http-service): An HTTP service which uses FeatureHub features to determine responses
+- [todo-service](./http-service): A standard todo service which is used across the SDKs to prove SDK functionality with Streaming and Polling.

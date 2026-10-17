@@ -3,6 +3,8 @@ package models
 import (
 	"fmt"
 	"net/url"
+	"slices"
+	"strings"
 )
 
 // Context defines metadata for the client:
@@ -35,6 +37,84 @@ func (c *Context) UniqueKey() (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func (c *Context) ForPercentage(key string) string {
+	var retVal = "<none>"
+	lc := strings.ToLower(key)
+	if lc == "userkey" {
+		if c.Userkey != "" {
+			retVal = c.Userkey
+		}
+	} else if lc == "session" {
+		if c.Session != "" {
+			retVal = c.Session
+		}
+	} else if lc == "device" {
+		if c.Device != "" {
+			retVal = string(c.Device)
+		}
+	} else if lc == "platform" {
+		if c.Platform != "" {
+			retVal = string(c.Platform)
+		}
+	} else if lc == "country" {
+		if c.Country != "" {
+			retVal = string(c.Country)
+		}
+	} else if lc == "version" {
+		if c.Version != "" {
+			retVal = string(c.Version)
+		}
+	} else {
+		if val, ok := c.Custom[key]; ok {
+			// we aren't sure whats in it, but it needs to be convertable to a string
+			retVal = fmt.Sprintf("%v", val)
+		}
+	}
+
+	logger.Tracef("context percent: for key `%s` the value is `%s`", key, retVal)
+
+	return retVal
+}
+
+func (c *Context) GenerateHeader() string {
+	parts := make([]string, 0)
+
+	if c.Userkey != "" {
+		parts = append(parts, fmt.Sprintf("userkey=%s", url.QueryEscape(c.Userkey)))
+	}
+	if c.Session != "" {
+		parts = append(parts, fmt.Sprintf("session=%s", url.QueryEscape(c.Session)))
+	}
+	if c.Device != "" {
+		parts = append(parts, fmt.Sprintf("device=%s", url.QueryEscape(string(c.Device))))
+	}
+	if c.Platform != "" {
+		parts = append(parts, fmt.Sprintf("platform=%s", url.QueryEscape(string(c.Platform))))
+	}
+	if c.Country != "" {
+		parts = append(parts, fmt.Sprintf("country=%s", url.QueryEscape(string(c.Country))))
+	}
+	if c.Version != "" {
+		parts = append(parts, fmt.Sprintf("version=%s", url.QueryEscape(c.Version)))
+	}
+	if c.Custom != nil {
+		for k, v := range c.Custom {
+			parts = append(parts, fmt.Sprintf("%s=%s", k, url.QueryEscape(fmt.Sprintf("%v", v))))
+		}
+	}
+	slices.Sort(parts)
+	var header = ""
+
+	for _, part := range parts {
+		if header != "" {
+			header += "&"
+		}
+		header += part
+	}
+
+	return header
 }
 
 // ContextDevice is the client's device type:
