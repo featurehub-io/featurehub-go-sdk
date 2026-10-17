@@ -18,7 +18,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/todo-server .
 FROM scratch
 
 COPY --from=builder /go/src/app/bin/todo-server ./
-# Expose port 8080 for the application
+# Run as an unprivileged user (scratch has no /etc/passwd, so use the numeric nobody uid/gid)
+USER 65534:65534
+# Expose port 8099 for the application
 EXPOSE 8099
 
 # Run the http-service

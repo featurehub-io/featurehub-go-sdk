@@ -5,8 +5,8 @@ import (
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/strategies"
 	"github.com/sirupsen/logrus"
-	"github.com/spaolacci/murmur3"
 	"github.com/stretchr/testify/assert"
+	"github.com/twmb/murmur3"
 )
 
 func TestStrategies(t *testing.T) {

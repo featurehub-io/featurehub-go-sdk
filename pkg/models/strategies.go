@@ -6,7 +6,7 @@ import (
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/strategies"
 	"github.com/google/uuid"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 var (
