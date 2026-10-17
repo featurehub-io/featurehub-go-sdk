@@ -377,3 +377,46 @@ func TestPassiveScheduleNextPollSetsCacheExpiry(t *testing.T) {
 		return c.whenPollingCacheExpires.After(before)
 	}, time.Second, time.Millisecond)
 }
+
+// --- timer lifecycle ---
+
+func TestConcurrentPollsKeepOnlyOneTimer(t *testing.T) {
+	mock := &mockPollingService{frequency: 40 * time.Millisecond}
+	c, _ := newTestClient(true, mock)
+	defer c.Close()
+
+	// two polls that both see Busy()==false, as Connect + ContextChange do
+	c.pollFunc(nil, nil)
+	c.pollFunc(nil, nil)
+	assert.Equal(t, 2, mock.getPollCount())
+
+	// with a single timer we get ~1 poll per period; duplicated timers would double it
+	time.Sleep(100 * time.Millisecond)
+	assert.LessOrEqual(t, mock.getPollCount(), 5)
+}
+
+func TestNoTimerScheduledAfterClose(t *testing.T) {
+	mock := &mockPollingService{frequency: 10 * time.Millisecond}
+	c, _ := newTestClient(true, mock)
+
+	c.Close()
+	c.scheduleNextPoll(nil, nil)
+
+	c.mu.Lock()
+	assert.Nil(t, c.currentTimer)
+	c.mu.Unlock()
+
+	time.Sleep(40 * time.Millisecond)
+	assert.Equal(t, 0, mock.getPollCount())
+}
+
+func TestNoTimerScheduledWhenPollerStoppedByServer(t *testing.T) {
+	mock := &mockPollingService{frequency: 10 * time.Millisecond, stopped: true}
+	c, _ := newTestClient(true, mock)
+
+	c.pollFunc(nil, nil)
+
+	c.mu.Lock()
+	assert.Nil(t, c.currentTimer)
+	c.mu.Unlock()
+}

@@ -32,13 +32,7 @@ func (cc *ClientWithContext) Repository() interfaces.RepositoryContext {
 }
 
 func (cc *ClientWithContext) AsConvertableString(context context.Context, key string) (string, error) {
-	fs, _, valRaw, err := cc.featureRepository.GetFeature(context, key)
-
-	if err != nil {
-		return "", err
-	}
-
-	return models.ConvertToString(fs.Type, valRaw)
+	return cc.AsConvertibleString(context, key)
 }
 
 func (cc *ClientWithContext) Boolean(context context.Context, featureKey string, defaultValue bool) bool {
@@ -314,7 +308,22 @@ func (cc *ClientWithContext) AsConvertibleString(context context.Context, key st
 	if err != nil {
 		return "", err
 	}
-	return models.ConvertToString(fs.Type, value)
+
+	if fs != nil {
+		return models.ConvertToString(fs.Type, value)
+	}
+
+	// an interceptor matched a key the server doesn't have, so infer the type from the value:
+	switch value.(type) {
+	case bool:
+		return models.ConvertToString(models.TypeBoolean, value)
+	case float32, float64, int, int32, int64:
+		return models.ConvertToString(models.TypeNumber, value)
+	case string:
+		return models.ConvertToString(models.TypeString, value)
+	default:
+		return "", errors.NewErrInvalidType("unable to determine the type of an intercepted value")
+	}
 }
 
 func (cc *ClientWithContext) fillEvent(context context.Context, event usage.UsageEvent) usage.UsageEvent {

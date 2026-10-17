@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
@@ -18,7 +19,7 @@ import (
 type ClientFeatureHubRepository struct {
 	features          map[string]*models.FeatureState
 	featuresMutex     sync.Mutex
-	hasData           bool
+	hasData           atomic.Bool
 	logger            *logrus.Logger
 	notifiers         notifiers
 	notifiersMutex    sync.Mutex
@@ -60,8 +61,22 @@ func (r *ClientFeatureHubRepository) RemoveUsageStream(id int) {
 	delete(r.usageStreams, id)
 }
 
-func (r *ClientFeatureHubRepository) EmitUsageEvent(context context.Context, event usage.UsageEvent) {
+// usageStreamHandlers returns a copy of the registered usage stream handlers, taken under usageStreamsMu,
+// so they can be called without holding the lock:
+func (r *ClientFeatureHubRepository) usageStreamHandlers() []usage.StreamHandler {
+	r.usageStreamsMu.Lock()
+	defer r.usageStreamsMu.Unlock()
+
+	handlers := make([]usage.StreamHandler, 0, len(r.usageStreams))
 	for _, h := range r.usageStreams {
+		handlers = append(handlers, h)
+	}
+
+	return handlers
+}
+
+func (r *ClientFeatureHubRepository) EmitUsageEvent(context context.Context, event usage.UsageEvent) {
+	for _, h := range r.usageStreamHandlers() {
 		h(context, event)
 	}
 }
@@ -77,7 +92,7 @@ func (r *ClientFeatureHubRepository) ReadinessListener(context context.Context, 
 }
 
 func (r *ClientFeatureHubRepository) IsReady() bool {
-	return r.hasData
+	return r.hasData.Load()
 }
 
 // makeUsageCollectionEventFromSnapshot builds a collection event from an already-captured
@@ -96,8 +111,14 @@ func (r *ClientFeatureHubRepository) makeUsageCollectionEventFromSnapshot(snapsh
 }
 
 func (r *ClientFeatureHubRepository) triggerFullFeatureUsageDrop(snapshot map[string]*models.FeatureState) {
-	if len(r.usageStreams) > 0 {
-		r.EmitUsageEvent(context.Background(), r.makeUsageCollectionEventFromSnapshot(snapshot))
+	handlers := r.usageStreamHandlers()
+	if len(handlers) == 0 {
+		return
+	}
+
+	event := r.makeUsageCollectionEventFromSnapshot(snapshot)
+	for _, h := range handlers {
+		h(context.Background(), event)
 	}
 }
 
@@ -106,8 +127,7 @@ func (r *ClientFeatureHubRepository) triggerFullFeatureUsageDrop(snapshot map[st
 // The caller must NOT hold featuresMutex when calling this.
 func (r *ClientFeatureHubRepository) isReady(snapshot map[string]*models.FeatureState) {
 	// we only do this once, when it first has data
-	if !r.hasData {
-		r.hasData = true
+	if r.hasData.CompareAndSwap(false, true) {
 
 		r.triggerFullFeatureUsageDrop(snapshot)
 
@@ -282,7 +302,7 @@ func (r *ClientFeatureHubRepository) GetString(context context.Context, key stri
 }
 
 func (r *ClientFeatureHubRepository) Boolean(context context.Context, featureKey string, defaultValue bool) bool {
-	if f, e := r.GetBoolean(context, featureKey); e == nil {
+	if f, e := r.GetBoolean(context, featureKey); e != nil {
 		return defaultValue
 	} else {
 		return f
@@ -290,7 +310,7 @@ func (r *ClientFeatureHubRepository) Boolean(context context.Context, featureKey
 }
 
 func (r *ClientFeatureHubRepository) Number(context context.Context, featureKey string, defaultValue float64) float64 {
-	if f, e := r.GetNumber(context, featureKey); e == nil || f == nil {
+	if f, e := r.GetNumber(context, featureKey); e != nil || f == nil {
 		return defaultValue
 	} else {
 		return *f
@@ -298,7 +318,7 @@ func (r *ClientFeatureHubRepository) Number(context context.Context, featureKey 
 }
 
 func (r *ClientFeatureHubRepository) JSON(context context.Context, featureKey string, defaultValue string) string {
-	if f, e := r.GetRawJSON(context, featureKey); e == nil || f == nil {
+	if f, e := r.GetRawJSON(context, featureKey); e != nil || f == nil {
 		return defaultValue
 	} else {
 		return *f
@@ -306,7 +326,7 @@ func (r *ClientFeatureHubRepository) JSON(context context.Context, featureKey st
 }
 
 func (r *ClientFeatureHubRepository) String(context context.Context, featureKey string, defaultValue string) string {
-	if f, e := r.GetString(context, featureKey); e == nil || f == nil {
+	if f, e := r.GetString(context, featureKey); e != nil || f == nil {
 		return defaultValue
 	} else {
 		return *f
@@ -435,6 +455,19 @@ func (r *ClientFeatureHubRepository) DeleteNotifier(featureKey, notifierUUID str
 
 // ProcessFeature updates a single feature from an SSE event payload (version-aware):
 func (r *ClientFeatureHubRepository) ProcessFeature(feature *models.FeatureState) {
+	snapshot, updated := r.storeFeature(feature)
+	if !updated {
+		return
+	}
+
+	// notifiers, the readiness listener and usage plugins may read features, so call them without the lock held:
+	r.notify(context.TODO(), feature)
+	r.isReady(snapshot)
+}
+
+// storeFeature applies a single feature update under featuresMutex. It returns a copy of the resulting
+// feature map and whether the update was applied:
+func (r *ClientFeatureHubRepository) storeFeature(feature *models.FeatureState) (map[string]*models.FeatureState, bool) {
 	r.featuresMutex.Lock()
 	defer r.featuresMutex.Unlock()
 
@@ -446,7 +479,7 @@ func (r *ClientFeatureHubRepository) ProcessFeature(feature *models.FeatureState
 				if findFeature.Version > feature.Version {
 					r.logger.WithField("key", feature.Key).Debug("Received an old feature from server with a changed key")
 					// the existing one is newer, bounce the process request
-					return
+					return nil, false
 				}
 				// the old feature with this key is not the same
 				// remove the old feature key, it will be added back in with the new key later
@@ -473,15 +506,18 @@ func (r *ClientFeatureHubRepository) ProcessFeature(feature *models.FeatureState
 
 	if currentFeature != nil && feature.Version <= currentFeature.Version {
 		r.logger.WithField("key", feature.Key).Debug("Received an old feature from server")
-		return
+		return nil, false
 	}
 
 	r.logger.WithField("key", feature.Key).Debug("Received a new feature from server")
 	r.features[feature.Key] = feature
-	snapshot := r.features
 
-	r.notify(context.TODO(), feature)
-	r.isReady(snapshot)
+	snapshot := make(map[string]*models.FeatureState, len(r.features))
+	for k, v := range r.features {
+		snapshot[k] = v
+	}
+
+	return snapshot, true
 }
 
 // ProcessFeatures replaces the entire feature set from an SSE event payload:
@@ -508,7 +544,7 @@ func (r *ClientFeatureHubRepository) ProcessFeatures(features []*models.FeatureS
 		r.notify(context.TODO(), newFeature)
 	}
 
-	r.hasData = true
+	r.hasData.Store(true)
 
 	r.logger.Debugf("Received %d features from server", len(features))
 }

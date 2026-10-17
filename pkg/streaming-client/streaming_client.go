@@ -103,8 +103,9 @@ func (c *StreamingClient) Connect() {
 
 	// Block until we have some data:
 	if c.config.WaitForData != nil {
-		for !c.repository.IsReady() {
-			time.Sleep(time.Second)
+		deadline := time.Now().Add(*c.config.WaitForData)
+		for !c.repository.IsReady() && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 }

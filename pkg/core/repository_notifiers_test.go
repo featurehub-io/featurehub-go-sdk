@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,33 +33,33 @@ func TestRepositoryNotifiers(t *testing.T) {
 	repository.ProcessFeature(feature)
 
 	// Feature1 gets one notifier:
-	var callback1called int
+	var callback1called atomic.Int32
 	callbackFunc1 := func(_ context.Context, _ *models.FeatureState) {
-		callback1called++
+		callback1called.Add(1)
 	}
 
 	repository.AddNotifierFeature(context.TODO(), "feature1", callbackFunc1)
 
 	// Feature 2 gets 2 notifiers (1/2):
-	var callback21called int
+	var callback21called atomic.Int32
 	callbackFunc21 := func(_ context.Context, _ *models.FeatureState) {
-		callback21called++
+		callback21called.Add(1)
 	}
 	feature2UUID1, _ := repository.AddNotifierFeature(context.TODO(), "feature2", callbackFunc21)
 
 	// Feature 2 gets 2 notifiers (2/2):
-	var callback22called int
+	var callback22called atomic.Int32
 	callbackFunc22 := func(_ context.Context, _ *models.FeatureState) {
-		callback22called++
+		callback22called.Add(1)
 	}
 	feature2UUID2, _ := repository.AddNotifierFeature(context.TODO(), "feature2", callbackFunc22)
 	assert.Len(t, repository.notifiers["feature2"], 2)
 	assert.NotEqual(t, feature2UUID1, feature2UUID2)
 
 	// Feature3 gets 1 notifer, but we'll delete it before it gets called:
-	var callback3called int
+	var callback3called atomic.Int32
 	callbackFunc3 := func(_ context.Context, _ *models.FeatureState) {
-		callback3called++
+		callback3called.Add(1)
 	}
 
 	feature2Deletable, _ := repository.AddNotifierFeature(context.TODO(), "feature2", callbackFunc22)
@@ -81,24 +83,27 @@ func TestRepositoryNotifiers(t *testing.T) {
 	assert.IsType(t, &errors.ErrNotifierNotFound{}, err)
 
 	// Add a readiness-listener:
-	var readinessListenerCalled = false
+	var readinessListenerCalled atomic.Bool
 	callbackReadiness := func(_ context.Context) {
-		readinessListenerCalled = true
+		readinessListenerCalled.Store(true)
 	}
 	repository.ReadinessListener(context.TODO(), callbackReadiness)
 
-	// Give the notifiers some time to think about what they've done:
-	time.Sleep(250 * time.Millisecond)
+	// Check that the correct callbacks were made (notifiers are called asynchronously):
+	assert.Eventually(t, func() bool {
+		// callback22 is called once each when added, the 2nd one was deleted but it was still called on adding
+		return callback1called.Load() == 1 && callback21called.Load() == 1 && callback22called.Load() == 2
+	}, time.Second, time.Millisecond)
+	assert.Equal(t, int32(0), callback3called.Load())
 
-	// Check that the correct callbacks were made:
-	assert.Equal(t, 1, callback1called)
-	assert.Equal(t, 1, callback21called)
-	assert.Equal(t, 2, callback22called) // once each when added, but then the 2nd one was deleted but it was still called on adding
-	assert.Equal(t, 0, callback3called)
+	// the typed notifiers below are called asynchronously, so guard the values they record:
+	var mu sync.Mutex
 
 	// Add a BOOLEAN callback:
 	var callbackBooleanValue = false
 	callbackBoolean := func(_ context.Context, value bool) {
+		mu.Lock()
+		defer mu.Unlock()
 		callbackBooleanValue = value
 	}
 	repository.AddNotifierBoolean(context.TODO(), "booleanfeature", callbackBoolean)
@@ -109,6 +114,8 @@ func TestRepositoryNotifiers(t *testing.T) {
 	// Add a JSON callback:
 	var callbackJSONValue = `{}`
 	callbackJSON := func(_ context.Context, value string) {
+		mu.Lock()
+		defer mu.Unlock()
 		callbackJSONValue = value
 	}
 	repository.AddNotifierJSON(context.TODO(), "jsonfeature", callbackJSON)
@@ -120,6 +127,8 @@ func TestRepositoryNotifiers(t *testing.T) {
 	// Add a NUMBER callback:
 	var callbackNumberValue float64 = 0
 	callbackNumber := func(_ context.Context, value float64) {
+		mu.Lock()
+		defer mu.Unlock()
 		callbackNumberValue = value
 	}
 	repository.AddNotifierNumber(context.TODO(), "numberfeature", callbackNumber)
@@ -131,6 +140,8 @@ func TestRepositoryNotifiers(t *testing.T) {
 	// Add a STRING callback:
 	var callbackStringValue = `{}`
 	callbackString := func(_ context.Context, value string) {
+		mu.Lock()
+		defer mu.Unlock()
 		callbackStringValue = value
 	}
 	repository.AddNotifierString(context.TODO(), "stringfeature", callbackString)
@@ -138,26 +149,35 @@ func TestRepositoryNotifiers(t *testing.T) {
 	feature, _ = featureFromString(`{"id":"id-stringfeature","key":"stringfeature","type":"STRING","value":"this is a string"}`)
 	repository.ProcessFeature(feature)
 
-	// Give the notifiers some time to think about what they've done:
-	time.Sleep(250 * time.Millisecond)
-
 	// Check that the callback functions were all triggered (with the correct values):
-	assert.Equal(t, true, callbackBooleanValue)
-	assert.Equal(t, `{"is_crufty": true}`, callbackJSONValue)
-	assert.Equal(t, float64(123456789), callbackNumberValue)
-	assert.Equal(t, "this is a string", callbackStringValue)
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return callbackBooleanValue &&
+			callbackJSONValue == `{"is_crufty": true}` &&
+			callbackNumberValue == float64(123456789) &&
+			callbackStringValue == "this is a string"
+	}, time.Second, time.Millisecond)
 
 	// Check that the repository triggered the readiness listener:
-	assert.True(t, readinessListenerCalled)
+	assert.True(t, readinessListenerCalled.Load())
 	//assert.Contains(t, logBuffer.String(), "Calling readinessListener()")
 }
 
 func TestFeatureNotifierWhenKeyChanges(t *testing.T) {
 	repository := createRepository()
 
+	var mu sync.Mutex
 	var callbackStringValue = `{}`
 	callbackString := func(_ context.Context, value string) {
+		mu.Lock()
+		defer mu.Unlock()
 		callbackStringValue = value
+	}
+	stringValue := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return callbackStringValue
 	}
 	repository.AddNotifierString(context.TODO(), "stringfeature", callbackString)
 
@@ -166,12 +186,10 @@ func TestFeatureNotifierWhenKeyChanges(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, fs)
 
-	time.Sleep(250 * time.Millisecond)
-	assert.Equal(t, "this is a string", callbackStringValue)
+	assert.Eventually(t, func() bool { return stringValue() == "this is a string" }, time.Second, time.Millisecond)
 
 	repository.ProcessFeature(ffs(`{"id":"id-stringfeature","key":"ออม","type":"STRING","value":"this is also","version":2}`))
-	time.Sleep(250 * time.Millisecond)
-	assert.Equal(t, "this is also", callbackStringValue)
+	assert.Eventually(t, func() bool { return stringValue() == "this is also" }, time.Second, time.Millisecond)
 	fs, _, _, err = repository.GetFeature(context.TODO(), "ออม")
 	assert.NoError(t, err)
 	assert.NotNil(t, fs)

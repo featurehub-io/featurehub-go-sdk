@@ -215,6 +215,7 @@ func (c *Config) NewContext() interfaces.Context {
 	if c.closed {
 		return nil
 	}
+	c.checkRepository()
 	return &ClientWithContext{
 		Context: &models.Context{
 			Custom: make(map[string]interface{}),
@@ -280,6 +281,7 @@ func (c *Config) WithContext(context *models.Context) interfaces.Context {
 	if c.closed {
 		return nil
 	}
+	c.checkRepository()
 	return &ClientWithContext{
 		Context:           context,
 		repository:        c.repository,

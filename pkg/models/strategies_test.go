@@ -116,3 +116,33 @@ func TestPercentageConversion(t *testing.T) {
 
 	print("%v", percent("ศิริลักษณ์", "p'Korn"))
 }
+
+func TestPercentageWithAttributesDoesNotMatchOnAttributesAlone(t *testing.T) {
+	SetLogger(logrus.New())
+
+	// a 0.0001% rollout restricted to nz: almost no-one is inside the percentage
+	ss := Strategies{
+		{
+			ID:         "tiny-nz",
+			Percentage: 1,
+			Value:      "rolled-out",
+			Attributes: []*StrategyAttribute{
+				{
+					ID:          "country",
+					Conditional: strategies.ConditionalEquals,
+					FieldName:   strategies.FieldNameCountry,
+					Values:      []interface{}{"new_zealand"},
+					Type:        strategies.TypeString,
+				},
+			},
+		},
+	}
+
+	// a user outside the percentage, but in nz
+	_, matched := ss.Calculate(&Context{Userkey: "user-outside-percentage", Country: "new_zealand"}, "feature")
+	assert.False(t, matched)
+
+	// no user key or session means the percentage can't be evaluated, so it must not match either
+	_, matched = ss.Calculate(&Context{Country: "new_zealand"}, "feature")
+	assert.False(t, matched)
+}

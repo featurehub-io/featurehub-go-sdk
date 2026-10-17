@@ -44,10 +44,9 @@ func (ss Strategies) getPercentageAttributes(cc *Context, percentageAttributes *
 	if percentageAttributes == nil || len(*percentageAttributes) == 0 {
 		if key, ok := cc.UniqueKey(); !ok {
 			cc.Session = uuid.New().String()
-			println(fmt.Sprintf("no percent attributes, using session and assigning `%s`", cc.Session))
+			logger.Trace("strategy: no percentage attributes or unique key, assigning a new session key")
 			return cc.Session
 		} else {
-			println(fmt.Sprintf("no percentage attributes, so using unique key `%s`", key))
 			return key
 		}
 	}
@@ -62,15 +61,12 @@ func (ss Strategies) getPercentageAttributes(cc *Context, percentageAttributes *
 		pa += cc.ForPercentage(key)
 	}
 
-	println(fmt.Sprintf("decoded percentage attribute string is `%s`", pa))
-
 	return pa
 }
 
 // Calculate contains the logic to check each strategy and decide which one applies (if any):
 func (ss Strategies) Calculate(clientContext *Context, featureId string) (interface{}, bool) {
 	if clientContext == nil || len(ss) == 0 {
-		println("no context or strategies")
 		return nil, false
 	}
 
@@ -138,8 +134,9 @@ func (ss Strategies) Calculate(clientContext *Context, featureId string) (interf
 			}
 		}
 
-		// even if it has a percentage, we could match on attributes
-		if !hasNoAttributes {
+		// a strategy with a percentage only matches its attributes inside the percentage check above,
+		// so only attribute-only strategies can match here
+		if strategy.Percentage == 0 && !hasNoAttributes {
 			if strategy.proceedWithAttributes(clientContext) {
 				logger.Tracef("Matched strategy (%s:%s)", strategy.ID, strategy.Name)
 				return strategy.Value, true

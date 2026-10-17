@@ -90,7 +90,7 @@ func (c *StreamingClient) handleEvents() {
 			var features []*models.FeatureState
 			if err := json.Unmarshal([]byte(event.Data()), &features); err != nil {
 				c.logger.WithError(err).WithField("event", "features").Error("Error unmarshaling SSE payload")
-				return
+				continue
 			}
 
 			// set their EnvironmentID

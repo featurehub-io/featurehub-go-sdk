@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,13 +140,13 @@ func TestRegisterMultipleUsagePluginsAllReceiveEvents(t *testing.T) {
 
 // mockEdgeClient records Poll and ContextChange calls.
 type mockEdgeClient struct {
-	pollCalls         int
+	pollCalls         atomic.Int32 // Poll is called from the usage plugin's goroutine
 	connectCalls      int
 	contextChangeArgs []string
 }
 
 func (m *mockEdgeClient) Connect()    { m.connectCalls++ }
-func (m *mockEdgeClient) Poll() error { m.pollCalls++; return nil }
+func (m *mockEdgeClient) Poll() error { m.pollCalls.Add(1); return nil }
 func (m *mockEdgeClient) ContextChange(h string) {
 	m.contextChangeArgs = append(m.contextChangeArgs, h)
 }
@@ -174,7 +175,7 @@ func TestPassiveRestPluginCallsPollOnUsageEvent(t *testing.T) {
 	config.repository.EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
 
 	// dispatch is async — wait briefly for the goroutine to complete
-	assert.Eventually(t, func() bool { return mockClient.pollCalls == 1 }, time.Second, time.Millisecond)
+	assert.Eventually(t, func() bool { return mockClient.pollCalls.Load() == 1 }, time.Second, time.Millisecond)
 }
 
 func TestPassiveRestPluginDoesNotPollWhenClientIsNil(t *testing.T) {
@@ -200,7 +201,7 @@ func TestPassiveRestPluginDoesNotPollForActiveRest(t *testing.T) {
 
 	// Give the goroutine time to run if it were going to
 	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, 0, mockClient.pollCalls)
+	assert.Equal(t, int32(0), mockClient.pollCalls.Load())
 }
 
 func TestPassiveRestPluginDoesNotPollForStreaming(t *testing.T) {
@@ -214,7 +215,7 @@ func TestPassiveRestPluginDoesNotPollForStreaming(t *testing.T) {
 	config.repository.EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
 
 	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, 0, mockClient.pollCalls)
+	assert.Equal(t, int32(0), mockClient.pollCalls.Load())
 }
 
 // --- Close ---

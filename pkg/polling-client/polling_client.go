@@ -136,6 +136,9 @@ func (c *FeatureHubPollingClient) ContextChange(header string) {
 
 // Close stops the polling client and any pending timers.
 func (c *FeatureHubPollingClient) Close() {
+	c.mu.Lock()
+	c.startable = false
+	c.mu.Unlock()
 	c.stop()
 }
 
@@ -208,13 +211,31 @@ func (c *FeatureHubPollingClient) scheduleNextPoll(
 
 	if c.active && frequency > 0 {
 		c.mu.Lock()
-		c.currentTimer = time.AfterFunc(frequency, func() {
+		defer c.mu.Unlock()
+
+		// don't schedule anything once closed, or once the server has told us to stop (e.g. a 236 response)
+		if !c.startable || c.polling.Stopped() {
+			return
+		}
+
+		// only ever have one pending timer, otherwise concurrent polls (e.g. from ContextChange) multiply them
+		if c.currentTimer != nil {
+			c.currentTimer.Stop()
+		}
+
+		var timer *time.Timer
+		timer = time.AfterFunc(frequency, func() {
 			c.mu.Lock()
+			if c.currentTimer != timer {
+				// this timer was replaced or cancelled
+				c.mu.Unlock()
+				return
+			}
 			c.currentTimer = nil
 			c.mu.Unlock()
 			c.pollFunc(resolve, reject)
 		})
-		c.mu.Unlock()
+		c.currentTimer = timer
 	} else if !c.active {
 		c.mu.Lock()
 		c.whenPollingCacheExpires = time.Now().Add(frequency)
