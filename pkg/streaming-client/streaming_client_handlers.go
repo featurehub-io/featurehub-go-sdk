@@ -85,12 +85,12 @@ func (c *StreamingClient) handleSSEError(event eventsource.Event) {
 	if c.hasData {
 		c.logger.WithError(&errors.ErrFromAPI{}).WithField("event", event.Event()).WithField("message", event.Data()).Error("Error from API client")
 	} else {
-		// Use the fatailErrorFunc for this one:
+		// Use the fatalErrorHandler for this one:
 		details := map[string]interface{}{
 			"event":   event.Event(),
 			"message": event.Data(),
 		}
-		c.fatalErrorFunc(&errors.ErrFromAPI{}, "Error from API client", details)
+		c.fatalErrorHandler(&errors.ErrFromAPI{}, "Error from API client", details)
 	}
 }
 

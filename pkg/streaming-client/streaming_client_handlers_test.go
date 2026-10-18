@@ -86,3 +86,27 @@ func TestStreamingClientHandlers(t *testing.T) {
 	// Check that the client knew not to trigger the readiness listener (because there was none):
 	assert.Contains(t, logBuffer.String(), "The FeatureHub server has requested that we close our connection")
 }
+
+func TestSSEErrorBeforeDataCallsFatalErrorHandler(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(new(bytes.Buffer))
+
+	client := &StreamingClient{
+		config:   &Config{},
+		features: make(map[string]*models.FeatureState),
+		logger:   logger,
+	}
+
+	var called bool
+	var details map[string]interface{}
+	client.WithFatalErrorHandler(func(err error, message string, d map[string]interface{}) {
+		called = true
+		details = d
+	})
+
+	// An "error" event before any data has arrived must go to the custom handler, not exit the process:
+	client.handleSSEError(&testEvent{event: "error", data: "bad key"})
+
+	assert.True(t, called, "the custom fatal error handler must be called for an error before any data")
+	assert.Equal(t, "bad key", details["message"])
+}
