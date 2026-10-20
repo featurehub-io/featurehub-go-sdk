@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"sync/atomic"
 	"testing"
@@ -153,6 +154,12 @@ func (m *mockEdgeClient) ContextChange(h string) {
 }
 func (m *mockEdgeClient) Close()        {}
 func (m *mockEdgeClient) Stopped() bool { return m.stopped }
+func (m *mockEdgeClient) StopReason() error {
+	if m.stopped {
+		return errors.NewErrFromAPI("stopped by the test")
+	}
+	return nil
+}
 
 func newMockEdgeProvider(client *mockEdgeClient) EdgeProviderFunc {
 	return func(_ *Config, _ interfaces.InternalRepository) (interfaces.EdgeClient, error) {
@@ -522,6 +529,9 @@ func TestConnectWithStoppedEdgeClientReturnsError(t *testing.T) {
 	_, err = config.Connect()
 	var stoppedErr *errors.ErrEdgeStopped
 	assert.ErrorAs(t, err, &stoppedErr)
+	assert.Contains(t, err.Error(), "stopped by the test", "the error says why the client stopped")
+	var apiErr *errors.ErrFromAPI
+	assert.ErrorAs(t, err, &apiErr, "the cause can be unwrapped")
 	assert.Equal(t, 1, providerCalls, "a stopped client is not replaced")
 	assert.Equal(t, 1, mockClient.connectCalls, "a stopped client is not connected again")
 }
@@ -553,4 +563,25 @@ func TestBuildWithStoppedEdgeClientReturnsError(t *testing.T) {
 	var stoppedErr *errors.ErrEdgeStopped
 	assert.ErrorAs(t, err, &stoppedErr)
 	assert.Len(t, mockClient.contextChangeArgs, 2, "a stopped client is not sent the new context")
+}
+
+func TestReportFatalErrorCallsHandlerOrLogs(t *testing.T) {
+	config := NewConfig("http://localhost", "default/env/key", nil)
+	logs := new(bytes.Buffer)
+	config.Logger.SetOutput(logs)
+	exited := false
+	config.Logger.ExitFunc = func(int) { exited = true }
+
+	config.ReportFatalError(errors.NewErrFromAPI("bad"), "stopping", nil)
+	assert.Contains(t, logs.String(), "stopping", "without a handler the error is logged")
+	assert.False(t, exited, "the SDK never exits the process")
+
+	var messages []string
+	config.WithFatalErrorHandler(func(err error, message string, details map[string]interface{}) {
+		messages = append(messages, message)
+	})
+	logs.Reset()
+	config.ReportFatalError(errors.NewErrFromAPI("bad"), "stopping again", nil)
+	assert.Equal(t, []string{"stopping again"}, messages)
+	assert.Empty(t, logs.String(), "the handler decides what to log")
 }

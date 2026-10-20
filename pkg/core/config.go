@@ -199,7 +199,7 @@ func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
 	// discard the client, so the next connect makes a new one.
 	if c.client != nil {
 		if c.client.Stopped() {
-			return c, errors.NewErrEdgeStopped()
+			return c, errors.NewErrEdgeStopped(c.client.StopReason())
 		}
 		if header != nil {
 			c.client.ContextChange(*header)
@@ -217,7 +217,7 @@ func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
 
 	// the client may be stopped before it connects (e.g. the server rejected the SDK key on the first request)
 	if c.client.Stopped() {
-		return c, errors.NewErrEdgeStopped()
+		return c, errors.NewErrEdgeStopped(c.client.StopReason())
 	}
 
 	if header != nil {
@@ -228,7 +228,7 @@ func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
 
 	// or while connecting (e.g. a rejected first poll, or edge.stale)
 	if c.client.Stopped() {
-		return c, errors.NewErrEdgeStopped()
+		return c, errors.NewErrEdgeStopped(c.client.StopReason())
 	}
 
 	return c, nil
@@ -324,11 +324,26 @@ func (c *Config) WithContext(context *models.Context) interfaces.Context {
 
 // WithFatalErrorHandler configures a handler called when an edge client stops for good because of an error
 // (a rejected SDK key or server address, or an error or failure event from the server). The client stops, but
-// the SDK never stops the process: without a handler the error is only logged. It is not called for errors on
-// the first connection, which Connect and Build return as ErrEdgeStopped. It can be set at any time:
+// the SDK never stops the process: without a handler the error is only logged. The handler may be called while
+// Connect or Build is still running (e.g. the first request is rejected), in which case they also return the
+// error as ErrEdgeStopped. It can be set at any time:
 func (c *Config) WithFatalErrorHandler(fatalErrorFunc interfaces.ErrorFunc) interfaces.FeatureHubConfig {
 	c.fatalErrorHandler.Store(&fatalErrorFunc)
 	return c
+}
+
+// ReportFatalError is used by edge clients when they stop because of an error. It passes the error to the
+// handler set with WithFatalErrorHandler, or logs it if none is set. It never stops the process:
+func (c *Config) ReportFatalError(err error, message string, details map[string]interface{}) {
+	if handler := c.FatalErrorHandler(); handler != nil {
+		handler(err, message, details)
+		return
+	}
+	logger := c.Logger
+	if logger == nil {
+		logger = logrus.StandardLogger()
+	}
+	logger.WithError(err).WithFields(details).Error(message)
 }
 
 // FatalErrorHandler returns the handler set with WithFatalErrorHandler, or nil if none is set:

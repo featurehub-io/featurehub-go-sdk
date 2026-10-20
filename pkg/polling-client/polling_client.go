@@ -2,6 +2,7 @@ package pollingclient
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -45,7 +46,7 @@ type FeatureHubPollingClient struct {
 	active                  bool
 	currentTimer            *time.Timer
 	whenPollingCacheExpires time.Time
-	connecting              bool // true during Connect's first poll, whose errors are returned by Config.Connect instead
+	stopReason              error // why the client stopped, set by the first stop
 }
 
 var _ interfaces.EdgeClient = (*FeatureHubPollingClient)(nil)
@@ -88,14 +89,9 @@ func (c *FeatureHubPollingClient) Connect() {
 		c.mu.Unlock()
 		return
 	}
-	c.connecting = true
 	c.mu.Unlock()
 
 	c.pollFunc(nil, nil)
-
-	c.mu.Lock()
-	c.connecting = false
-	c.mu.Unlock()
 
 	if c.config.WaitForData != nil {
 		deadline := time.Now().Add(*c.config.WaitForData)
@@ -157,12 +153,39 @@ func (c *FeatureHubPollingClient) Stopped() bool {
 	return !c.startable
 }
 
+// StopReason returns why the client stopped, or nil if it has not:
+func (c *FeatureHubPollingClient) StopReason() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.startable {
+		return nil
+	}
+	if c.stopReason == nil {
+		return errClientClosed
+	}
+	return c.stopReason
+}
+
+// errClientClosed is the stop reason for a client closed with Close:
+var errClientClosed = errors.New("the client was closed")
+
 // Close stops the polling client and any pending timers.
 func (c *FeatureHubPollingClient) Close() {
+	c.stopFor(errClientClosed)
+}
+
+// stopFor stops the client for good, and reports whether this was the first stop. The reason given by the first
+// stop is kept, for StopReason:
+func (c *FeatureHubPollingClient) stopFor(reason error) bool {
 	c.mu.Lock()
-	c.startable = false
+	first := c.startable
+	if first {
+		c.startable = false
+		c.stopReason = reason
+	}
 	c.mu.Unlock()
 	c.stop()
+	return first
 }
 
 func (c *FeatureHubPollingClient) stop() {
@@ -175,20 +198,6 @@ func (c *FeatureHubPollingClient) stop() {
 		timer.Stop()
 	}
 	c.polling.Stop()
-}
-
-// reportFatalError logs an error that has stopped polling for good, and passes it to the config's fatal error
-// handler. During Connect's first poll the handler is not called: Config.Connect returns ErrEdgeStopped instead,
-// and calling user code from inside Connect could re-enter the Config. The SDK never stops the host process.
-func (c *FeatureHubPollingClient) reportFatalError(err error, message string, details map[string]interface{}, connecting bool) {
-	c.logger.WithError(err).WithFields(details).Error(message)
-
-	if connecting || c.config == nil {
-		return
-	}
-	if handler := c.config.FatalErrorHandler(); handler != nil {
-		handler(err, message, details)
-	}
 }
 
 // isFatalStatus reports whether an HTTP status means polling can never succeed: a bad or unknown API key, or
@@ -216,13 +225,11 @@ func (c *FeatureHubPollingClient) pollFunc(resolve func(), reject func(error)) {
 			if httpErr.StatusCode == http.StatusNotFound {
 				message = "The API key provided does not exist, stopping polling."
 			}
-			c.mu.Lock()
-			c.startable = false
-			connecting := c.connecting
-			c.mu.Unlock()
-			c.stop()
-
-			c.reportFatalError(err, message, map[string]interface{}{"status": httpErr.StatusCode}, connecting)
+			// a concurrent poll (e.g. from ContextChange) can get the same response; only the first stop reports it
+			reason := fherrors.NewErrFromAPI(fmt.Sprintf("the server rejected the API key or server address (status %d: %s)", httpErr.StatusCode, httpErr.Message))
+			if c.stopFor(reason) {
+				c.config.ReportFatalError(reason, message, map[string]interface{}{"status": httpErr.StatusCode})
+			}
 
 			if reject != nil {
 				reject(err)
@@ -243,14 +250,9 @@ func (c *FeatureHubPollingClient) pollFunc(resolve func(), reject func(error)) {
 	// 236: the server has told us to stop (the same as SSE edge.stale). Stop for good - Connect, Poll and
 	// ContextChange will no longer poll:
 	if c.polling.Stopped() {
-		c.mu.Lock()
-		wasStartable := c.startable
-		c.startable = false
-		c.mu.Unlock()
-		if wasStartable {
+		if c.stopFor(fherrors.NewErrFromAPI("the server requested a stop (status 236)")) {
 			c.logger.Warn("The FeatureHub server has requested that we stop polling (236)! No further updates will be received - existing data will continue to be served")
 		}
-		c.stop()
 
 		if resolve != nil {
 			resolve()
@@ -317,13 +319,10 @@ func (c *FeatureHubPollingClient) scheduleNextPoll(
 // It flattens features from all environments and pushes them to the repository.
 func (c *FeatureHubPollingClient) response(environments []*models.FeatureEnvironmentCollection) {
 	if len(environments) == 0 {
-		c.mu.Lock()
-		c.startable = false
-		connecting := c.connecting
-		c.mu.Unlock()
-		c.stop()
-
-		c.reportFatalError(fherrors.NewErrFromAPI("no environments returned"), "No environments returned, stopping polling.", nil, connecting)
+		reason := fherrors.NewErrFromAPI("no environments returned")
+		if c.stopFor(reason) {
+			c.config.ReportFatalError(reason, "No environments returned, stopping polling.", nil)
+		}
 		return
 	}
 

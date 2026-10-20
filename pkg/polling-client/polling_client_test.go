@@ -477,17 +477,40 @@ func TestRejectedPollCallsFatalErrorHandler(t *testing.T) {
 	assert.True(t, c.Stopped())
 }
 
-func TestRejectedFirstPollDuringConnectDoesNotCallFatalErrorHandler(t *testing.T) {
-	mock := &mockPollingService{frequency: time.Hour, pollErr: &HTTPError{StatusCode: 404, Message: "404"}}
+func TestRejectedFirstPollDuringConnectCallsFatalErrorHandler(t *testing.T) {
+	mock := &mockPollingService{frequency: time.Hour, pollErr: &HTTPError{StatusCode: 404, Message: "404 Not Found"}}
 	c, _ := newTestClient(true, mock)
 
-	called := false
-	c.config.WithFatalErrorHandler(func(error, string, map[string]interface{}) { called = true })
+	calls := 0
+	c.config.WithFatalErrorHandler(func(error, string, map[string]interface{}) { calls++ })
 
 	c.Connect()
 
-	assert.False(t, called, "Config.Connect returns ErrEdgeStopped for this instead")
+	assert.Equal(t, 1, calls)
 	assert.True(t, c.Stopped())
+	assert.Contains(t, c.StopReason().Error(), "404")
+}
+
+func TestRejectedResponseSeenByTwoPollsIsReportedOnce(t *testing.T) {
+	mock := &mockPollingService{frequency: time.Hour, pollErr: &HTTPError{StatusCode: 401, Message: "401"}}
+	c, _ := newTestClient(true, mock)
+
+	calls := 0
+	c.config.WithFatalErrorHandler(func(error, string, map[string]interface{}) { calls++ })
+
+	// e.g. Connect's poll and one started by ContextChange both get the rejection
+	c.pollFunc(nil, nil)
+	c.pollFunc(nil, nil)
+
+	assert.Equal(t, 1, calls)
+}
+
+func TestStopReasonForClose(t *testing.T) {
+	c, _ := newTestClient(true, &mockPollingService{frequency: time.Hour})
+	assert.Nil(t, c.StopReason())
+
+	c.Close()
+	assert.ErrorIs(t, c.StopReason(), errClientClosed)
 }
 
 func TestPollingConnectStopsWaitingForDataWhenClientStops(t *testing.T) {

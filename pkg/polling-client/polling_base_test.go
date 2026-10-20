@@ -430,3 +430,19 @@ func TestPollStopsOn236WithEmptyBody(t *testing.T) {
 	assert.NoError(t, pb.Poll(), "a 236 is not an error, even with nothing to decode")
 	assert.True(t, pb.Stopped())
 }
+
+func TestPollOn236WithNoEnvironmentsDoesNotReportNoEnvironments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(236)
+		w.Write([]byte("[]"))
+	}))
+	defer srv.Close()
+
+	called := false
+	pb := newPollingBase(srv.URL+"/features?apiKey=test-key", time.Minute, 5*time.Second,
+		func(envs []*models.FeatureEnvironmentCollection) { called = true }, newTestLogger())
+
+	assert.NoError(t, pb.Poll())
+	assert.True(t, pb.Stopped())
+	assert.False(t, called, "an empty list with a 236 is just the stop, not 'no environments'")
+}

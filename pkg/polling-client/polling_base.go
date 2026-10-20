@@ -260,6 +260,7 @@ func (b *PollingBase) doPoll() error {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		if stale {
+			b.logger.WithError(err).Warn("Could not read the features sent with a 236 response")
 			return nil
 		}
 		return err
@@ -272,6 +273,11 @@ func (b *PollingBase) doPoll() error {
 			return nil
 		}
 		return err
+	}
+
+	// a 236 with no features is just the stop; an empty list on a normal response means there is nothing to poll
+	if stale && len(environments) == 0 {
+		return nil
 	}
 
 	if !b.Postdecode(environments) {

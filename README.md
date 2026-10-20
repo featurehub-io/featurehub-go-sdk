@@ -108,12 +108,13 @@ The client stops for good, and does not reconnect, when:
   is pointed at the wrong server. Retrying cannot succeed, so both the streaming and the polling clients stop.
 * the server sends a streaming `error` or `failure` event. The client disconnects and does not retry.
 
-When the client stops because of an error (anything other than `edge.stale` or `236`), the error is logged and
-passed to the fatal error handler set with `WithFatalErrorHandler`. The SDK never stops the host process - what to
-do is up to the handler. The handler is not called for an error on the first connection, because `Connect()`
-returns it instead.
+When the client stops because of an error (anything other than `edge.stale` or `236`), the error is passed to the
+fatal error handler set with `WithFatalErrorHandler`, or logged if there is none. The SDK never stops the host
+process - what to do is up to the handler. The handler can be called while `Connect()` is still running (for
+example when the first request is rejected), so it should not call back into the config.
 
-Once the client has stopped, `Connect()` and `Build()` return an `*errors.ErrEdgeStopped` error. Calling
+Once the client has stopped, `Connect()` and `Build()` return an `*errors.ErrEdgeStopped` error. Its `Cause`
+(also available with `errors.Unwrap`) says why, for example a rejected key with its HTTP status. Calling
 `Connect()` again on a client that is running does nothing. A streaming connection attempt waits up to 30 seconds
 for the server to answer before failing.
 

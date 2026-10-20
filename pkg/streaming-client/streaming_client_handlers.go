@@ -3,6 +3,7 @@ package streamingclient
 import (
 	"encoding/json"
 	goerrors "errors"
+	"fmt"
 	"net/http"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
@@ -25,7 +26,7 @@ func (c *StreamingClient) handleStreamError(err error) eventsource.StreamErrorHa
 	}
 
 	if subscriptionErr, stop := stopStatus(err); stop {
-		c.stopForStatus(subscriptionErr, true)
+		c.stopForStatus(subscriptionErr)
 		return closeNow
 	}
 
@@ -49,22 +50,18 @@ func stopStatus(err error) (eventsource.SubscriptionError, bool) {
 }
 
 // stopForStatus stops the client for good after a stopStatus response. A rejected request is passed to the fatal
-// error handler if reportToHandler is set, and otherwise logged:
-func (c *StreamingClient) stopForStatus(subscriptionErr eventsource.SubscriptionError, reportToHandler bool) {
-	c.Close()
-
+// error handler:
+func (c *StreamingClient) stopForStatus(subscriptionErr eventsource.SubscriptionError) {
 	if subscriptionErr.Code == statusStale {
+		c.stop(errors.NewErrFromAPI("the server requested a stop (status 236)"))
 		c.logger.Warn("The FeatureHub server has requested that we stop (236)! No further updates will be received - existing data will continue to be served")
 		return
 	}
 
-	const message = "The FeatureHub server rejected the SDK key or server address, stopping"
+	reason := errors.NewErrFromAPI(fmt.Sprintf("the server rejected the SDK key or server address (status %d: %s)", subscriptionErr.Code, subscriptionErr.Message))
+	c.stop(reason)
 	details := map[string]interface{}{"status": subscriptionErr.Code, "message": subscriptionErr.Message}
-	if reportToHandler {
-		c.reportFatalError(&errors.ErrFromAPI{}, message, details)
-	} else {
-		c.logger.WithError(&errors.ErrFromAPI{}).WithFields(details).Error(message)
-	}
+	c.reportFatalError(reason, "The FeatureHub server rejected the SDK key or server address, stopping", details)
 }
 
 // handleEvents deals with incoming server-side events:
@@ -151,13 +148,14 @@ func (c *StreamingClient) handleSSEError(event eventsource.Event) {
 // stopForEvent stops the client for good after an error or failure event from the server - it disconnects and
 // never reconnects - and passes the event to the fatal error handler:
 func (c *StreamingClient) stopForEvent(event eventsource.Event, message string) {
-	c.Close()
+	reason := errors.NewErrFromAPI(fmt.Sprintf("%s event from the server: %s", event.Event(), event.Data()))
+	c.stop(reason)
 
 	details := map[string]interface{}{
 		"event":   event.Event(),
 		"message": event.Data(),
 	}
-	c.reportFatalError(&errors.ErrFromAPI{}, message, details)
+	c.reportFatalError(reason, message, details)
 }
 
 func (c *StreamingClient) handleFHConfigEvent(event eventsource.Event) {
@@ -173,6 +171,6 @@ func (c *StreamingClient) handleFHConfigEvent(event eventsource.Event) {
 
 		// Close the client for good - it will not reconnect, and cannot be connected again:
 		c.logger.Warn("The FeatureHub server has requested that we close our connection (edge.stale)! No further updates will be received - existing data will continue to be served")
-		c.Close()
+		c.stop(errors.NewErrFromAPI("the server requested a stop (edge.stale)"))
 	}
 }

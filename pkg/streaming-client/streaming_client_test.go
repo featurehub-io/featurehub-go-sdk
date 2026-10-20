@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -385,8 +388,18 @@ func TestFirstConnectionRejectedReturnsStoppedClient(t *testing.T) {
 			assert.False(t, client.isRunning.Load())
 			assert.Len(t, server.connections(), 1)
 
-			// Config.Connect reports this as ErrEdgeStopped, so the handler is not called from inside Connect
-			assert.Empty(t, called, "the fatal error handler is not called for the first connection")
+			assert.Error(t, client.StopReason())
+			if status == 236 {
+				assert.Empty(t, called, "a stop requested by the server is not an error")
+			} else {
+				assert.Contains(t, client.StopReason().Error(), fmt.Sprint(status))
+				select {
+				case message := <-called:
+					assert.Contains(t, message, "rejected the SDK key")
+				default:
+					t.Fatal("the fatal error handler was not called")
+				}
+			}
 		})
 	}
 }
@@ -441,12 +454,6 @@ func TestFatalErrorHandlerCanBeSetWhileErrorsAreReported(t *testing.T) {
 	wg.Wait() // the race detector reports any unsynchronised access
 }
 
-func TestStreamHTTPClientLimitsWaitForResponseHeaders(t *testing.T) {
-	transport := newSSEHTTPClient().Transport.(*http.Transport)
-	assert.Equal(t, sseResponseHeaderTimeout, transport.ResponseHeaderTimeout)
-	assert.Zero(t, newSSEHTTPClient().Timeout, "an overall timeout would cut the long-lived stream")
-}
-
 func TestErrorAndFailureEventsStopClientEvenWithData(t *testing.T) {
 	for _, eventName := range []models.Event{models.SSEError, models.FHFailure} {
 		t.Run(string(eventName), func(t *testing.T) {
@@ -497,20 +504,74 @@ func TestConnectStopsWaitingForDataWhenClientStops(t *testing.T) {
 	assert.True(t, client.Stopped())
 }
 
-func TestStreamHTTPClientUsesReplacedDefaultTransport(t *testing.T) {
-	original := http.DefaultTransport
-	t.Cleanup(func() { http.DefaultTransport = original })
-	http.DefaultTransport = roundTripperFunc(func(r *http.Request) (*http.Response, error) { return nil, fmt.Errorf("mocked") })
-
-	var client *http.Client
-	assert.NotPanics(t, func() { client = newSSEHTTPClient() })
-	assert.Nil(t, client.Transport, "a nil Transport means the replaced http.DefaultTransport is used")
-}
-
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestStreamHTTPClientIsShared(t *testing.T) {
-	assert.Same(t, sseHTTPClient(), sseHTTPClient(), "all streaming clients share one connection pool")
+func TestHeaderTimeoutTransportFailsWhenServerDoesNotAnswer(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done() // never send the headers
+	}))
+	t.Cleanup(ts.Close)
+
+	client := &http.Client{Transport: headerTimeoutTransport{timeout: 100 * time.Millisecond}}
+
+	start := time.Now()
+	_, err := client.Get(ts.URL)
+
+	assert.Error(t, err)
+	assert.Less(t, time.Since(start), 2*time.Second)
+}
+
+func TestHeaderTimeoutTransportDoesNotLimitTheBody(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		time.Sleep(300 * time.Millisecond) // well past the header timeout
+		fmt.Fprint(w, "late data")
+	}))
+	t.Cleanup(ts.Close)
+
+	client := &http.Client{Transport: headerTimeoutTransport{timeout: 100 * time.Millisecond}}
+
+	resp, err := client.Get(ts.URL)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "late data", string(body))
+	assert.NoError(t, resp.Body.Close())
+}
+
+func TestStreamHTTPClientUsesTheCurrentDefaultTransport(t *testing.T) {
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+
+	// replaced after the shared client was made, as a host adding tracing might
+	http.DefaultTransport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("mocked")), Request: r}, nil
+	})
+
+	resp, err := sseHTTPClient.Get("http://featurehub.example/features")
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	assert.Equal(t, "mocked", string(body))
+}
+
+func TestStopReasonExplainsWhyTheClientStopped(t *testing.T) {
+	client, _ := newTestStreamingClient(t)
+	assert.Nil(t, client.StopReason())
+
+	client.handleStreamError(eventsource.SubscriptionError{Code: http.StatusUnauthorized, Message: "Unauthorized"})
+	assert.Contains(t, client.StopReason().Error(), "401")
+
+	// a later Close does not replace the reason
+	client.Close()
+	assert.Contains(t, client.StopReason().Error(), "401")
+}
+
+func TestStopReasonForClose(t *testing.T) {
+	client, _ := newTestStreamingClient(t)
+	client.Close()
+	assert.ErrorIs(t, client.StopReason(), errClientClosed)
 }

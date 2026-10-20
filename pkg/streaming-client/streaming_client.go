@@ -2,8 +2,10 @@ package streamingclient
 
 import (
 	"context"
+	goerrors "errors"
+	"fmt"
+	"io"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +23,7 @@ type StreamingClient struct {
 	fatalErrorHandler atomic.Pointer[interfaces.ErrorFunc] // overrides the config's handler if set with WithFatalErrorHandler
 	isRunning         atomic.Bool
 	stopped           atomic.Bool
+	stopReason        atomic.Pointer[error] // why the client stopped, set by the first stop
 	// cancelRequest cancels the context of the SSE request. This is the only way the stream is shut down: the
 	// eventsource library watches the request context and, when it is cancelled, closes the stream (so it will
 	// not reconnect), aborts any connection or reconnect in progress, and closes the events channel.
@@ -38,22 +41,56 @@ const sseJitterRatio = 0.5
 // answers would block Connect forever:
 const sseResponseHeaderTimeout = 30 * time.Second
 
-// newSSEHTTPClient returns an HTTP client for the stream. It has no overall timeout (the stream is long lived),
-// only a limit on waiting for the response headers. If the host has replaced http.DefaultTransport (e.g. to add
-// tracing, or with a mock in tests), the client uses it as it is, without the limit, rather than bypassing it:
-func newSSEHTTPClient() *http.Client {
-	transport, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		return &http.Client{} // a nil Transport means http.DefaultTransport
-	}
-	transport = transport.Clone()
-	transport.ResponseHeaderTimeout = sseResponseHeaderTimeout
-	return &http.Client{Transport: transport}
+// headerTimeoutTransport limits how long a request waits for the response headers, and then lets the body (the
+// long-lived stream) run without a limit. It sends each request through whatever http.DefaultTransport is at the
+// time, so a transport the host has replaced (e.g. to add tracing, or a mock in tests) is always used, and all
+// streaming clients share its connection pool.
+type headerTimeoutTransport struct {
+	timeout time.Duration
 }
 
-// sseHTTPClient is shared by all streaming clients, so they share one connection pool. It is made on first use
-// rather than at package init, so that a replacement http.DefaultTransport set up by the host is seen:
-var sseHTTPClient = sync.OnceValue(newSSEHTTPClient)
+func (t headerTimeoutTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	ctx, cancel := context.WithCancel(req.Context())
+	timer := time.AfterFunc(t.timeout, cancel)
+
+	resp, err := http.DefaultTransport.RoundTrip(req.WithContext(ctx))
+
+	if !timer.Stop() {
+		// the timer fired, so the request has been (or is about to be) cancelled
+		if err == nil {
+			resp.Body.Close()
+		}
+		cancel()
+		return nil, fmt.Errorf("no response from %s within %s", req.URL.Host, t.timeout)
+	}
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	// the request's context must stay alive while the body is read, and is released when the body is closed
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
+}
+
+// cancelOnClose cancels a request's context when its response body is closed:
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnClose) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
+}
+
+// sseHTTPClient is used by all streaming clients. It has no overall timeout (the stream is long lived), only a
+// limit on waiting for the response headers:
+var sseHTTPClient = &http.Client{Transport: headerTimeoutTransport{timeout: sseResponseHeaderTimeout}}
+
+// errClientClosed is the stop reason for a client closed with Close:
+var errClientClosed = goerrors.New("the client was closed")
 
 // eventsourceLogger sends the eventsource library's connection messages (e.g. reconnects) to the debug log:
 type eventsourceLogger struct {
@@ -108,7 +145,7 @@ func NewStreamingClient(config *core.Config, repository interfaces.InternalRepos
 	// Last-Event-ID) rather than blocking forever. Reconnects back off exponentially (with jitter) up to the
 	// configured maximum delay:
 	stream, err := eventsource.SubscribeWithRequestAndOptions(req,
-		eventsource.StreamOptionHTTPClient(sseHTTPClient()),
+		eventsource.StreamOptionHTTPClient(sseHTTPClient),
 		eventsource.StreamOptionReadTimeout(config.SSEReadTimeout()),
 		eventsource.StreamOptionUseBackoff(config.SSEMaxRetryDelay()),
 		eventsource.StreamOptionUseJitter(sseJitterRatio),
@@ -117,10 +154,10 @@ func NewStreamingClient(config *core.Config, repository interfaces.InternalRepos
 	)
 	if err != nil {
 		// A status that means we must never connect (236, or a rejected key or server address) stops the client,
-		// which is returned so that it stays stopped. Connect then returns ErrEdgeStopped, so the fatal error
-		// handler is not called as well. Any other error can be retried by connecting again:
+		// which is returned so that it stays stopped (Connect then returns ErrEdgeStopped with the reason). Any
+		// other error can be retried by connecting again:
 		if subscriptionErr, stop := stopStatus(err); stop {
-			client.stopForStatus(subscriptionErr, false)
+			client.stopForStatus(subscriptionErr)
 			return client, nil
 		}
 		cancelRequest()
@@ -137,26 +174,17 @@ func (c *StreamingClient) ContextChange(header string) {
 	// empty
 }
 
-// fatalErrorFunc is the default handler for unrecoverable asynchronous errors, used when no other is set. It
-// only logs: the client has already stopped, and existing data continues to be served. The SDK never stops
-// the host process:
-func (c *StreamingClient) fatalErrorFunc(err error, message string, details map[string]interface{}) {
-	c.logger.WithError(err).WithFields(details).Error(message)
-}
-
-// reportFatalError passes an unrecoverable error to the handler set on this client, or else the one on the
-// config, or else the default. The config is checked each time so that a handler added after Connect is used:
+// reportFatalError passes an error that has stopped the client to the handler set on this client, or else to the
+// config (its handler, or a log if it has none). The config is checked each time so that a handler added after
+// Connect is used. The SDK never stops the host process:
 func (c *StreamingClient) reportFatalError(err error, message string, details map[string]interface{}) {
-	var handler interfaces.ErrorFunc
 	if override := c.fatalErrorHandler.Load(); override != nil {
-		handler = *override
+		(*override)(err, message, details)
 	} else if c.config != nil {
-		handler = c.config.FatalErrorHandler()
+		c.config.ReportFatalError(err, message, details)
+	} else {
+		c.logger.WithError(err).WithFields(details).Error(message)
 	}
-	if handler == nil {
-		handler = c.fatalErrorFunc
-	}
-	handler(err, message, details)
 }
 
 // Poll - does nothing, its only used for PassiveRest
@@ -188,18 +216,37 @@ func (c *StreamingClient) Connect() {
 // client also closes itself if the server tells it to stop (edge.stale, or a 236 status), rejects the key or
 // server address, or sends an error or failure event.
 func (c *StreamingClient) Close() {
+	c.stop(errClientClosed)
+}
+
+// stop stops the client for good. The reason given by the first stop is kept, for StopReason:
+func (c *StreamingClient) stop(reason error) {
 	c.isRunning.Store(false)
-	c.stopped.Store(true)
+	if c.stopped.CompareAndSwap(false, true) {
+		c.stopReason.Store(&reason)
+	}
 	if c.cancelRequest != nil {
 		// the eventsource library closes the stream and releases the connection when the request is cancelled
 		c.cancelRequest()
 	}
 }
 
-// Stopped reports whether the client has stopped for good: it was closed, the server told it to stop, or the
-// server rejected the SDK key or server address. A stopped client cannot be connected again.
+// Stopped reports whether the client has stopped for good: it was closed, the server told it to stop, the
+// server rejected the SDK key or server address, or the server sent an error. A stopped client cannot be
+// connected again.
 func (c *StreamingClient) Stopped() bool {
 	return c.stopped.Load()
+}
+
+// StopReason returns why the client stopped, or nil if it has not:
+func (c *StreamingClient) StopReason() error {
+	if reason := c.stopReason.Load(); reason != nil {
+		return *reason
+	}
+	if c.stopped.Load() {
+		return errClientClosed
+	}
+	return nil
 }
 
 // WithFatalErrorHandler configures an error handler which will be called for asynchronous fatal errors:

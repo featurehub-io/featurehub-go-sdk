@@ -12,4 +12,6 @@ type EdgeClient interface {
 	// Stopped - true once the client has stopped for good (closed, told to stop by the server, or its requests
 	// were rejected). A stopped client never connects again.
 	Stopped() bool
+	// StopReason - why the client stopped, or nil while it has not
+	StopReason() error
 }
