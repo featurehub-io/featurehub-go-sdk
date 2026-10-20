@@ -3,6 +3,7 @@ package streamingclient
 import (
 	"context"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,12 +39,21 @@ const sseJitterRatio = 0.5
 const sseResponseHeaderTimeout = 30 * time.Second
 
 // newSSEHTTPClient returns an HTTP client for the stream. It has no overall timeout (the stream is long lived),
-// only a limit on waiting for the response headers:
+// only a limit on waiting for the response headers. If the host has replaced http.DefaultTransport (e.g. to add
+// tracing, or with a mock in tests), the client uses it as it is, without the limit, rather than bypassing it:
 func newSSEHTTPClient() *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Client{} // a nil Transport means http.DefaultTransport
+	}
+	transport = transport.Clone()
 	transport.ResponseHeaderTimeout = sseResponseHeaderTimeout
 	return &http.Client{Transport: transport}
 }
+
+// sseHTTPClient is shared by all streaming clients, so they share one connection pool. It is made on first use
+// rather than at package init, so that a replacement http.DefaultTransport set up by the host is seen:
+var sseHTTPClient = sync.OnceValue(newSSEHTTPClient)
 
 // eventsourceLogger sends the eventsource library's connection messages (e.g. reconnects) to the debug log:
 type eventsourceLogger struct {
@@ -98,7 +108,7 @@ func NewStreamingClient(config *core.Config, repository interfaces.InternalRepos
 	// Last-Event-ID) rather than blocking forever. Reconnects back off exponentially (with jitter) up to the
 	// configured maximum delay:
 	stream, err := eventsource.SubscribeWithRequestAndOptions(req,
-		eventsource.StreamOptionHTTPClient(newSSEHTTPClient()),
+		eventsource.StreamOptionHTTPClient(sseHTTPClient()),
 		eventsource.StreamOptionReadTimeout(config.SSEReadTimeout()),
 		eventsource.StreamOptionUseBackoff(config.SSEMaxRetryDelay()),
 		eventsource.StreamOptionUseJitter(sseJitterRatio),
@@ -107,8 +117,10 @@ func NewStreamingClient(config *core.Config, repository interfaces.InternalRepos
 	)
 	if err != nil {
 		// A status that means we must never connect (236, or a rejected key or server address) stops the client,
-		// which is returned so that it stays stopped. Any other error can be retried by connecting again:
-		if client.handleStreamError(err); client.stopped.Load() {
+		// which is returned so that it stays stopped. Connect then returns ErrEdgeStopped, so the fatal error
+		// handler is not called as well. Any other error can be retried by connecting again:
+		if subscriptionErr, stop := stopStatus(err); stop {
+			client.stopForStatus(subscriptionErr, false)
 			return client, nil
 		}
 		cancelRequest()
@@ -126,8 +138,8 @@ func (c *StreamingClient) ContextChange(header string) {
 }
 
 // fatalErrorFunc is the default handler for unrecoverable asynchronous errors, used when no other is set. It
-// only logs: the client has already stopped, and existing data continues to be served, so the host process
-// is left running:
+// only logs: the client has already stopped, and existing data continues to be served. The SDK never stops
+// the host process:
 func (c *StreamingClient) fatalErrorFunc(err error, message string, details map[string]interface{}) {
 	c.logger.WithError(err).WithFields(details).Error(message)
 }
@@ -166,14 +178,15 @@ func (c *StreamingClient) Connect() {
 	// Block until we have some data:
 	if c.config.WaitForData != nil {
 		deadline := time.Now().Add(*c.config.WaitForData)
-		for !c.repository.IsReady() && time.Now().Before(deadline) {
+		for !c.repository.IsReady() && !c.stopped.Load() && time.Now().Before(deadline) {
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
 }
 
 // Close shuts down the SSE connection and event handlers. A closed client cannot be connected again. The
-// client also closes itself if the server tells it to stop (edge.stale, or a 236 status) or rejects the key.
+// client also closes itself if the server tells it to stop (edge.stale, or a 236 status), rejects the key or
+// server address, or sends an error or failure event.
 func (c *StreamingClient) Close() {
 	c.isRunning.Store(false)
 	c.stopped.Store(true)

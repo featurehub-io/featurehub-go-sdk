@@ -534,6 +534,7 @@ func TestConnectReturnsErrorWhenClientStopsStraightAway(t *testing.T) {
 	_, err := config.Connect()
 	var stoppedErr *errors.ErrEdgeStopped
 	assert.ErrorAs(t, err, &stoppedErr)
+	assert.Equal(t, 0, mockClient.connectCalls, "a client that is already stopped is not connected")
 }
 
 func TestBuildWithStoppedEdgeClientReturnsError(t *testing.T) {

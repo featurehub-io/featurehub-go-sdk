@@ -215,13 +215,18 @@ func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
 
 	c.client = provider
 
+	// the client may be stopped before it connects (e.g. the server rejected the SDK key on the first request)
+	if c.client.Stopped() {
+		return c, errors.NewErrEdgeStopped()
+	}
+
 	if header != nil {
 		c.client.ContextChange(*header)
 	}
 
 	c.client.Connect()
 
-	// the client may have been stopped straight away, e.g. the server rejected the SDK key
+	// or while connecting (e.g. a rejected first poll, or edge.stale)
 	if c.client.Stopped() {
 		return c, errors.NewErrEdgeStopped()
 	}
@@ -317,7 +322,10 @@ func (c *Config) WithContext(context *models.Context) interfaces.Context {
 	}
 }
 
-// WithFatalErrorHandler configures an error handler which will be called for asynchronous fatal errors:
+// WithFatalErrorHandler configures a handler called when an edge client stops for good because of an error
+// (a rejected SDK key or server address, or an error or failure event from the server). The client stops, but
+// the SDK never stops the process: without a handler the error is only logged. It is not called for errors on
+// the first connection, which Connect and Build return as ErrEdgeStopped. It can be set at any time:
 func (c *Config) WithFatalErrorHandler(fatalErrorFunc interfaces.ErrorFunc) interfaces.FeatureHubConfig {
 	c.fatalErrorHandler.Store(&fatalErrorFunc)
 	return c
@@ -343,6 +351,7 @@ func (c *Config) WithLogLevel(logLevel logrus.Level) interfaces.FeatureHubConfig
 // and sends "bye" before closing it, so this should be longer than the server's connection time.
 // It can also be set with the FEATUREHUB_SSE_READ_TIMEOUT environment variable (e.g. "5m").
 // A value of zero (or less) means DefaultSSEReadTimeout is used; the timeout cannot be turned off.
+// It must be set before Connect: a connected streaming client keeps the value it started with.
 func (c *Config) WithSSEReadTimeout(value time.Duration) interfaces.FeatureHubConfig {
 	c.sseReadTimeout = value
 	return c
@@ -362,6 +371,7 @@ func (c *Config) SSEReadTimeout() time.Duration {
 // all reconnect at once after an outage.
 // It can also be set with the FEATUREHUB_SSE_MAX_RETRY_DELAY environment variable (e.g. "2m").
 // A value of zero (or less) means DefaultSSEMaxRetryDelay is used.
+// It must be set before Connect: a connected streaming client keeps the value it started with.
 func (c *Config) WithSSEMaxRetryDelay(value time.Duration) interfaces.FeatureHubConfig {
 	c.sseMaxRetryDelay = value
 	return c

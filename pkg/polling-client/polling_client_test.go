@@ -461,3 +461,43 @@ func TestFatal401And403StopClient(t *testing.T) {
 		})
 	}
 }
+
+func TestRejectedPollCallsFatalErrorHandler(t *testing.T) {
+	mock := &mockPollingService{frequency: time.Hour, pollErr: &HTTPError{StatusCode: 401, Message: "401"}}
+	c, _ := newTestClient(true, mock)
+
+	var messages []string
+	c.config.WithFatalErrorHandler(func(err error, message string, details map[string]interface{}) {
+		messages = append(messages, message)
+	})
+
+	c.pollFunc(nil, nil)
+
+	assert.Len(t, messages, 1, "a rejected poll after Connect is passed to the fatal error handler")
+	assert.True(t, c.Stopped())
+}
+
+func TestRejectedFirstPollDuringConnectDoesNotCallFatalErrorHandler(t *testing.T) {
+	mock := &mockPollingService{frequency: time.Hour, pollErr: &HTTPError{StatusCode: 404, Message: "404"}}
+	c, _ := newTestClient(true, mock)
+
+	called := false
+	c.config.WithFatalErrorHandler(func(error, string, map[string]interface{}) { called = true })
+
+	c.Connect()
+
+	assert.False(t, called, "Config.Connect returns ErrEdgeStopped for this instead")
+	assert.True(t, c.Stopped())
+}
+
+func TestPollingConnectStopsWaitingForDataWhenClientStops(t *testing.T) {
+	mock := &mockPollingService{frequency: time.Hour, pollErr: &HTTPError{StatusCode: 404, Message: "404"}}
+	c, _ := newTestClient(true, mock)
+	wait := 5 * time.Second
+	c.config.WaitForData = &wait
+
+	start := time.Now()
+	c.Connect()
+
+	assert.Less(t, time.Since(start), time.Second, "Connect must not wait out WaitForData once the client has stopped")
+}

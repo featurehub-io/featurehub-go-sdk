@@ -168,7 +168,7 @@ func TestCloseStopsRealStream(t *testing.T) {
 	}
 }
 
-func TestSSEErrorBeforeDataCallsFatalErrorHandler(t *testing.T) {
+func TestSSEErrorStopsClientAndCallsFatalErrorHandler(t *testing.T) {
 	client, _ := newTestStreamingClient(t)
 
 	var called bool
@@ -180,8 +180,9 @@ func TestSSEErrorBeforeDataCallsFatalErrorHandler(t *testing.T) {
 
 	client.handleSSEError(&testEvent{event: string(models.SSEError), data: "bad key"})
 
-	assert.True(t, called, "the custom fatal error handler must be called for an error before any data")
+	assert.True(t, called, "the custom fatal error handler must be called for an error event")
 	assert.Equal(t, "bad key", details["message"])
+	assert.True(t, client.Stopped(), "an error event stops the client for good")
 }
 
 func TestConfigFatalErrorHandlerIsUsedForSSEError(t *testing.T) {
@@ -199,7 +200,7 @@ func TestConfigFatalErrorHandlerIsUsedForSSEError(t *testing.T) {
 
 	select {
 	case message := <-called:
-		assert.Equal(t, "Error from API client", message)
+		assert.Equal(t, "Error from API client, stopping", message)
 	case <-time.After(3 * time.Second):
 		t.Fatal("the fatal error handler set on the config was not called")
 	}
@@ -228,7 +229,7 @@ func TestFatalErrorHandlerAddedToConfigAfterClientIsMadeIsUsed(t *testing.T) {
 
 	select {
 	case message := <-called:
-		assert.Equal(t, "Error from API client", message)
+		assert.Equal(t, "Error from API client, stopping", message)
 	default:
 		t.Fatal("the handler added to the config after the client was made was not called")
 	}
@@ -384,14 +385,8 @@ func TestFirstConnectionRejectedReturnsStoppedClient(t *testing.T) {
 			assert.False(t, client.isRunning.Load())
 			assert.Len(t, server.connections(), 1)
 
-			if status != 236 {
-				select {
-				case message := <-called:
-					assert.Contains(t, message, "rejected the SDK key")
-				default:
-					t.Fatal("the fatal error handler was not called")
-				}
-			}
+			// Config.Connect reports this as ErrEdgeStopped, so the handler is not called from inside Connect
+			assert.Empty(t, called, "the fatal error handler is not called for the first connection")
 		})
 	}
 }
@@ -450,4 +445,72 @@ func TestStreamHTTPClientLimitsWaitForResponseHeaders(t *testing.T) {
 	transport := newSSEHTTPClient().Transport.(*http.Transport)
 	assert.Equal(t, sseResponseHeaderTimeout, transport.ResponseHeaderTimeout)
 	assert.Zero(t, newSSEHTTPClient().Timeout, "an overall timeout would cut the long-lived stream")
+}
+
+func TestErrorAndFailureEventsStopClientEvenWithData(t *testing.T) {
+	for _, eventName := range []models.Event{models.SSEError, models.FHFailure} {
+		t.Run(string(eventName), func(t *testing.T) {
+			client, _ := newTestStreamingClient(t)
+			called := make(chan string, 1)
+			client.WithFatalErrorHandler(recordFatalErrors(called))
+			client.isRunning.Store(true)
+
+			client.events <- &testEvent{event: string(models.FHFeatures), data: `[{"id":"1","key":"flag","type":"BOOLEAN","value":true,"version":1}]`}
+			client.events <- &testEvent{event: string(eventName), data: "went wrong"}
+
+			done := make(chan struct{})
+			go func() {
+				client.handleEvents()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("handleEvents did not exit")
+			}
+
+			assert.True(t, client.repository.IsReady())
+			assert.True(t, client.Stopped(), "the client disconnects and never retries")
+			assert.True(t, client.handleStreamError(eventsource.ErrReadTimeout).CloseNow)
+			select {
+			case message := <-called:
+				assert.Contains(t, message, "stopping")
+			default:
+				t.Fatal("the fatal error handler was not called")
+			}
+		})
+	}
+}
+
+func TestConnectStopsWaitingForDataWhenClientStops(t *testing.T) {
+	client, _ := newTestStreamingClient(t)
+	wait := 5 * time.Second
+	client.config.WaitForData = &wait
+
+	client.events <- &testEvent{event: string(models.FHConfig), data: `{"edge.stale":true}`}
+
+	start := time.Now()
+	client.Connect()
+
+	assert.Less(t, time.Since(start), time.Second, "Connect must not wait out WaitForData once the client has stopped")
+	assert.True(t, client.Stopped())
+}
+
+func TestStreamHTTPClientUsesReplacedDefaultTransport(t *testing.T) {
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	http.DefaultTransport = roundTripperFunc(func(r *http.Request) (*http.Response, error) { return nil, fmt.Errorf("mocked") })
+
+	var client *http.Client
+	assert.NotPanics(t, func() { client = newSSEHTTPClient() })
+	assert.Nil(t, client.Transport, "a nil Transport means the replaced http.DefaultTransport is used")
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestStreamHTTPClientIsShared(t *testing.T) {
+	assert.Same(t, sseHTTPClient(), sseHTTPClient(), "all streaming clients share one connection pool")
 }

@@ -246,29 +246,36 @@ func (b *PollingBase) doPoll() error {
 		}
 	}
 
+	// 236 = server signals no further updates will occur (equivalent to SSE edge.stale). Stop before reading the
+	// body, so we stop even if the body is empty or cannot be decoded:
+	stale := resp.StatusCode == 236
+
 	b.mu.Lock()
 	b.etag = resp.Header.Get("ETag")
+	if stale {
+		b.stopped = true
+	}
 	b.mu.Unlock()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		if stale {
+			return nil
+		}
 		return err
 	}
 
 	var environments []*models.FeatureEnvironmentCollection
 	if err := json.Unmarshal(body, &environments); err != nil {
+		if stale {
+			b.logger.WithError(err).Debug("Could not decode the features sent with a 236 response")
+			return nil
+		}
 		return err
 	}
 
 	if !b.Postdecode(environments) {
 		b.callback(environments)
-	}
-
-	// 236 = server signals no further updates will occur (equivalent to SSE edge.stale)
-	if resp.StatusCode == 236 {
-		b.mu.Lock()
-		b.stopped = true
-		b.mu.Unlock()
 	}
 
 	return nil

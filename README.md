@@ -83,7 +83,8 @@ this long.
 ```
 
 It can also be set with the `FEATUREHUB_SSE_READ_TIMEOUT` environment variable, using Go duration syntax (e.g. `5m`).
-A value of zero (or less) means the 4 minute default is used; the timeout cannot be turned off.
+A value of zero (or less) means the 4 minute default is used; the timeout cannot be turned off. It must be set
+before `Connect()` - changing it afterwards does not affect a connected client.
 
 #### Streaming reconnects
 
@@ -96,7 +97,7 @@ cut by a random amount of up to half, so that many clients do not all reconnect 
 ```
 
 It can also be set with the `FEATUREHUB_SSE_MAX_RETRY_DELAY` environment variable (e.g. `2m`). A value of zero
-(or less) means the 1 minute default is used.
+(or less) means the 1 minute default is used. Like the read timeout, it must be set before `Connect()`.
 
 The client stops for good, and does not reconnect, when:
 
@@ -104,9 +105,13 @@ The client stops for good, and does not reconnect, when:
   clients stop, and calling `Connect()` again does not restart them. Features already received continue to be
   served.
 * the server rejects the request with a `400`, `401`, `403` or `404` status: the SDK key is wrong, or the client
-  is pointed at the wrong server. Retrying cannot succeed, so both the streaming and the polling clients stop. The
-  streaming client also calls the fatal error handler (see `WithFatalErrorHandler`); the polling client logs an
-  error. If no fatal error handler is set, the error is logged - the host process is not stopped.
+  is pointed at the wrong server. Retrying cannot succeed, so both the streaming and the polling clients stop.
+* the server sends a streaming `error` or `failure` event. The client disconnects and does not retry.
+
+When the client stops because of an error (anything other than `edge.stale` or `236`), the error is logged and
+passed to the fatal error handler set with `WithFatalErrorHandler`. The SDK never stops the host process - what to
+do is up to the handler. The handler is not called for an error on the first connection, because `Connect()`
+returns it instead.
 
 Once the client has stopped, `Connect()` and `Build()` return an `*errors.ErrEdgeStopped` error. Calling
 `Connect()` again on a client that is running does nothing. A streaming connection attempt waits up to 30 seconds

@@ -420,3 +420,13 @@ func TestPollConcurrentCallsCoalesce(t *testing.T) {
 
 	assert.Equal(t, 1, serverCallCount, "server should be called exactly once")
 }
+
+func TestPollStopsOn236WithEmptyBody(t *testing.T) {
+	pb, srv, _ := newTestBase(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(236)
+	}, time.Minute)
+	defer srv.Close()
+
+	assert.NoError(t, pb.Poll(), "a 236 is not an error, even with nothing to decode")
+	assert.True(t, pb.Stopped())
+}

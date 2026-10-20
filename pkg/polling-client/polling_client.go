@@ -45,6 +45,7 @@ type FeatureHubPollingClient struct {
 	active                  bool
 	currentTimer            *time.Timer
 	whenPollingCacheExpires time.Time
+	connecting              bool // true during Connect's first poll, whose errors are returned by Config.Connect instead
 }
 
 var _ interfaces.EdgeClient = (*FeatureHubPollingClient)(nil)
@@ -87,13 +88,18 @@ func (c *FeatureHubPollingClient) Connect() {
 		c.mu.Unlock()
 		return
 	}
+	c.connecting = true
 	c.mu.Unlock()
 
 	c.pollFunc(nil, nil)
 
+	c.mu.Lock()
+	c.connecting = false
+	c.mu.Unlock()
+
 	if c.config.WaitForData != nil {
 		deadline := time.Now().Add(*c.config.WaitForData)
-		for !c.repository.IsReady() && time.Now().Before(deadline) {
+		for !c.repository.IsReady() && !c.Stopped() && time.Now().Before(deadline) {
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
@@ -171,6 +177,20 @@ func (c *FeatureHubPollingClient) stop() {
 	c.polling.Stop()
 }
 
+// reportFatalError logs an error that has stopped polling for good, and passes it to the config's fatal error
+// handler. During Connect's first poll the handler is not called: Config.Connect returns ErrEdgeStopped instead,
+// and calling user code from inside Connect could re-enter the Config. The SDK never stops the host process.
+func (c *FeatureHubPollingClient) reportFatalError(err error, message string, details map[string]interface{}, connecting bool) {
+	c.logger.WithError(err).WithFields(details).Error(message)
+
+	if connecting || c.config == nil {
+		return
+	}
+	if handler := c.config.FatalErrorHandler(); handler != nil {
+		handler(err, message, details)
+	}
+}
+
 // isFatalStatus reports whether an HTTP status means polling can never succeed: a bad or unknown API key, or
 // a server address that points somewhere other than FeatureHub.
 func isFatalStatus(status int) bool {
@@ -192,16 +212,17 @@ func (c *FeatureHubPollingClient) pollFunc(resolve func(), reject func(error)) {
 	if err != nil {
 		if httpErr, ok := errors.AsType[*HTTPError](err); ok && isFatalStatus(httpErr.StatusCode) {
 			// Fatal: the API key is invalid or not found, or the server address is wrong — stop polling for good.
-			switch httpErr.StatusCode {
-			case http.StatusNotFound:
-				c.logger.Error("The API key provided does not exist, stopping polling.")
-			case http.StatusUnauthorized, http.StatusForbidden:
-				c.logger.WithField("status", httpErr.StatusCode).Error("The server refused the request (check the server address and API key), stopping polling.")
+			message := "The server refused the request (check the server address and API key), stopping polling."
+			if httpErr.StatusCode == http.StatusNotFound {
+				message = "The API key provided does not exist, stopping polling."
 			}
 			c.mu.Lock()
 			c.startable = false
+			connecting := c.connecting
 			c.mu.Unlock()
 			c.stop()
+
+			c.reportFatalError(err, message, map[string]interface{}{"status": httpErr.StatusCode}, connecting)
 
 			if reject != nil {
 				reject(err)
@@ -296,11 +317,13 @@ func (c *FeatureHubPollingClient) scheduleNextPoll(
 // It flattens features from all environments and pushes them to the repository.
 func (c *FeatureHubPollingClient) response(environments []*models.FeatureEnvironmentCollection) {
 	if len(environments) == 0 {
-		c.logger.Trace("No environments returned, stopping polling")
 		c.mu.Lock()
 		c.startable = false
+		connecting := c.connecting
 		c.mu.Unlock()
 		c.stop()
+
+		c.reportFatalError(fherrors.NewErrFromAPI("no environments returned"), "No environments returned, stopping polling.", nil, connecting)
 		return
 	}
 
