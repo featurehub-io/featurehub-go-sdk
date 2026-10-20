@@ -39,7 +39,7 @@ This is a Go client SDK for FeatureHub, a feature management platform. The SDK c
   - `FeatureHubContext` — mirrors `Context` but omits `context.Context` from every method. Implemented by `ContextFeatureHub` for use in HTTP handlers and other call sites that hold their own `context.Context`.
   - `FeatureHubConfig` — interface for `*Config`, covering the full lifecycle: `Connect()`, `Build()`, `Close()`, `NewContext()`, `WithContext()`, `IsReady()`, `ReadinessListener()`, `EdgeType()`, `Validate()`, `EnvironmentID()`, `ClientEvaluated()`, `FeaturesURL()`, `PollingFeaturesURL()`, `Timeout()`, and fluent builder methods (`WithSDKKey`, `WithLogLevel`, `WithWaitForData`, `WithFatalErrorHandler`, `RegisterUsagePlugin`, `AddValueInterceptor`). Fluent methods and `Connect`/`Build` return `FeatureHubConfig`; `NewContext`/`WithContext` return `Context`.
   - `InternalRepository` — write side: `ProcessFeature`, `ProcessFeatures`, `ProcessDeleteFeature`, `IsReady`, `AddValueInterceptor`, `WithContext`, `ReadinessListener(context.Context, func(context.Context))`.
-  - `EdgeClient` — `Connect()`, `Poll()`, `ContextChange()`, `Close()`.
+  - `EdgeClient` — `Connect()`, `Poll()`, `ContextChange()`, `Close()`, `Stopped()` (true once stopped for good: closed, 236/edge.stale, or 400/401/403/404).
   - `FeatureValueInterceptor` — `func(ctx context.Context, key string, repo FeatureRepository, feature *models.FeatureState) (value interface{}, matched bool)`. Note: value is returned first, matched bool second.
   - `ErrorFunc` — `func(error, string, map[string]interface{})` for fatal async errors.
 - **`pkg/models/`**: Domain objects.
@@ -52,7 +52,7 @@ This is a Go client SDK for FeatureHub, a feature management platform. The SDK c
 - **`pkg/streaming-client/`**: SSE-based `EdgeClient` implementation. `StreamingClient` manages the SSE connection and delegates all feature storage to a `ClientFeatureHubRepository`. Has a `Close()` method that sets `stopped=true`, preventing reconnection.
 - **`pkg/polling-client/`**: HTTP polling `EdgeClient` implementation. `FeatureHubPollingClient` supports active (timer-based) and passive (cache-expiry-based) modes. `PollingBase` handles the low-level HTTP GET mechanics (etag, cache-control, SHA-256 context header hashing, concurrent-caller coalescing). `Poll()` and `ContextChange()` dispatch asynchronously.
 - **`pkg/strategies/`**: Client-side rollout strategy matchers for boolean, number, string, semver, date, datetime, and IP address attribute types.
-- **`pkg/errors/`**: Typed errors: `ErrBadConfig`, `ErrFeatureNotFound`, `ErrInvalidType`, `ErrNotifierNotFound`, `ErrFromAPI`, `ErrFeatureIsWrongType`, `ErrInvalidNotifierCallback`.
+- **`pkg/errors/`**: Typed errors: `ErrBadConfig`, `ErrFeatureNotFound`, `ErrInvalidType`, `ErrNotifierNotFound`, `ErrFromAPI`, `ErrFeatureIsWrongType`, `ErrInvalidNotifierCallback`, `ErrConfigClosed`, `ErrEdgeStopped` (returned by `Connect`/`Build` when the edge client has stopped for good).
 - **`pkg/interceptors/`**: Built-in `FeatureValueInterceptor` implementations.
   - `LocalYamlValueInterceptor` — reads feature overrides from a YAML file specified by `FEATUREHUB_OVERRIDES` env var (defaults to `featurehub-overrides.yaml`). YAML is a list of `{key, type, value}` entries. Values are converted via `models.ConvertValue` at initialisation time.
 - **`pkg/usage/`**: Usage/analytics subsystem.
@@ -96,6 +96,8 @@ core.NewFromContext(r.Context())            // retrieves ContextFeatureHub (inte
 - `FEATUREHUB_POLLING_PASSIVE` (any non-empty value) → passive REST polling
 - Neither set → SSE streaming (default)
 - `FEATUREHUB_POLLING_REQ_TIMEOUT` — overrides the HTTP request timeout (default `8s`) in the polling client
+- `FEATUREHUB_SSE_READ_TIMEOUT` — SSE read timeout (default `4m`, `WithSSEReadTimeout`); zero or less means the default
+- `FEATUREHUB_SSE_MAX_RETRY_DELAY` — maximum SSE reconnect backoff delay (default `1m`, `WithSSEMaxRetryDelay`); zero or less means the default. Reconnects use exponential backoff with 50% jitter.
 
 `WithWaitForData(duration)` blocks `Connect()` until the first feature batch arrives (or the duration elapses).
 
@@ -176,9 +178,9 @@ Edge types are defined in `pkg/models` as `models.EdgeType`:
 - `models.EdgeActiveRest` — active REST polling on a timer
 - `models.EdgePassiveRest` — passive REST polling on demand
 
-**SSE streaming** (`pkg/streaming-client`): long-lived SSE connection. Events dispatched to `InternalRepository` as they arrive. Status 236 / `edge.stale` closes the connection. `Close()` sets `stopped=true`; a stopped client will refuse to reconnect.
+**SSE streaming** (`pkg/streaming-client`): long-lived SSE connection. Events dispatched to `InternalRepository` as they arrive. Status 236 / `edge.stale` calls `Close()`, stopping the client permanently. A 400/401/403/404 on reconnect also closes the client and calls the fatal error handler; other errors reconnect with backoff. `Close()` sets `stopped=true`; a stopped client will refuse to reconnect. The stream is shut down only by cancelling the request context (`cancelRequest`) — the eventsource library closes the stream and the events channel when it is cancelled. The fatal error handler is resolved on each error (client override → `Config.FatalErrorHandler()` → default, which only logs at error level and never exits). Handlers are stored in `atomic.Pointer`s so they can be set while the stream is running. A 236/400/401/403/404 on the *first* connection makes `NewStreamingClient` return an already-stopped client (no error) so it stays stopped; other first-connection errors return `(nil, err)`. The stream's HTTP client has a 30s `ResponseHeaderTimeout` but no overall timeout.
 
-**Active REST polling** (`pkg/polling-client`): polls on a timer at `config.Timeout()` interval. The server may shorten the interval via `Cache-Control: max-age`. HTTP 404/400 → fatal (stops polling). Other errors → logged and retried on the next timer tick. HTTP 236 → stops polling.
+**Active REST polling** (`pkg/polling-client`): polls on a timer at `config.Timeout()` interval. The server may shorten the interval via `Cache-Control: max-age`. HTTP 400/401/403/404 → fatal (stops polling permanently, `isFatalStatus`). Other errors → logged and retried on the next timer tick. HTTP 236 → stops polling permanently (`startable=false`; `Connect`, `Poll` and `ContextChange` no longer poll).
 
 **Passive REST polling** (`pkg/polling-client`): polls only when the cache has expired (driven by `Cache-Control: max-age` from the server). Subsequent `Poll()` calls before expiry are no-ops. Useful when the host environment controls when polling occurs. When usage events are enabled, the `passiveRestPollPlugin` also triggers a poll on each usage event.
 
@@ -257,3 +259,5 @@ fhCfg.Close()                                          // shuts down edge client
 ```
 
 `Config.Close()` is idempotent — safe to call when no client is connected.
+
+`Connect()`/`Build()` reuse an existing edge client rather than creating a new one, and do not call its `Connect()` again (`Build()` only sends the new context header). If the client has stopped (`Stopped()`), including straight after its first `Connect()`, they return `ErrEdgeStopped`. `Streaming()`, `ActiveRest()` and `PassiveRest()` discard the client, so the next connect creates a new one.

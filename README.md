@@ -70,6 +70,48 @@ There are 3 steps to connecting:
 	fhClient := fhConfig.NewContext()
 ```
 
+#### Streaming read timeout
+
+The streaming (SSE) client reconnects if it receives no data for a period, sending the `Last-Event-ID` so the
+server can resume where it left off. When the client is up to date, the server keeps the connection open without
+sending anything until it says `bye` and closes it (around 3 minutes), so the timeout must be longer than that.
+It defaults to 4 minutes, and a dead connection (for example one dropped by a load balancer) is detected after
+this long.
+
+```go
+	fhConfig, err := client.New(serverAddress, apiKey).WithSSEReadTimeout(5 * time.Minute).Connect()
+```
+
+It can also be set with the `FEATUREHUB_SSE_READ_TIMEOUT` environment variable, using Go duration syntax (e.g. `5m`).
+A value of zero (or less) means the 4 minute default is used; the timeout cannot be turned off.
+
+#### Streaming reconnects
+
+When a streaming connection drops, the client waits before reconnecting. The wait starts at the server's retry
+interval (3 seconds by default) and doubles on each failed attempt, up to a maximum of 1 minute. Each wait is also
+cut by a random amount of up to half, so that many clients do not all reconnect at once after an outage.
+
+```go
+	fhConfig, err := client.New(serverAddress, apiKey).WithSSEMaxRetryDelay(2 * time.Minute).Connect()
+```
+
+It can also be set with the `FEATUREHUB_SSE_MAX_RETRY_DELAY` environment variable (e.g. `2m`). A value of zero
+(or less) means the 1 minute default is used.
+
+The client stops for good, and does not reconnect, when:
+
+* the server tells it to stop, with an `edge.stale` event or a `236` status. Both the streaming and the polling
+  clients stop, and calling `Connect()` again does not restart them. Features already received continue to be
+  served.
+* the server rejects the request with a `400`, `401`, `403` or `404` status: the SDK key is wrong, or the client
+  is pointed at the wrong server. Retrying cannot succeed, so both the streaming and the polling clients stop. The
+  streaming client also calls the fatal error handler (see `WithFatalErrorHandler`); the polling client logs an
+  error. If no fatal error handler is set, the error is logged - the host process is not stopped.
+
+Once the client has stopped, `Connect()` and `Build()` return an `*errors.ErrEdgeStopped` error. Calling
+`Connect()` again on a client that is running does nothing. A streaming connection attempt waits up to 30 seconds
+for the server to answer before failing.
+
 ### Requesting Features
 
 All feature retrieval methods accept a `context.Context` as their first argument. Pass the request context from your HTTP handler (or `context.Background()` / `context.TODO()` where none is available) so that usage events carry the correct cancellation and tracing metadata.

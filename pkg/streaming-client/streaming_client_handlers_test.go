@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/donovanhide/eventsource"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/core"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -29,43 +28,42 @@ func TestStreamingClientHandlers(t *testing.T) {
 
 	repository := core.NewClientFeatureHubRepository(logger)
 
-	// Use the config to make a new StreamingClient with a mock apiClient::
+	// Use the config to make a new StreamingClient with a mock stream:
+	stream := newFakeStream(100)
 	client := &StreamingClient{
-		apiClient: &eventsource.Stream{
-			Errors: make(chan error, 100),
-			Events: make(chan eventsource.Event, 100),
-		},
-		config:     config,
-		logger:     logger,
-		repository: repository,
+		cancelRequest: stream.Close,
+		events:        stream.events,
+		config:        config,
+		logger:        logger,
+		repository:    repository,
 	}
 
-	// Load the mock apiClient up with a "feature" event:
-	client.apiClient.Events <- &testEvent{
+	// Load the mock stream up with a "feature" event:
+	client.events <- &testEvent{
 		data:  `{"id":"id-anotherfeature","key":"anotherfeature","type":"BOOLEAN","value":false,"version":3}`,
 		event: "feature",
 	}
 
-	// Load the mock apiClient up with a "feature" event (but with an out-of-sync version):
-	client.apiClient.Events <- &testEvent{
+	// Load the mock stream up with a "feature" event (but with an out-of-sync version):
+	client.events <- &testEvent{
 		data:  `{"id":"id-anotherfeature","key":"anotherfeature","type":"BOOLEAN","value":false,"version":2}`,
 		event: "feature",
 	}
 
-	// Load the mock apiClient up with a "feature" event (which we'll delete):
-	client.apiClient.Events <- &testEvent{
+	// Load the mock stream up with a "feature" event (which we'll delete):
+	client.events <- &testEvent{
 		data:  `{"id":"id-featuretodelete","key":"featuretodelete","type":"BOOLEAN","value":true}`,
 		event: "feature",
 	}
 
-	// Load the mock apiClient up with a "delete_feature" event:
-	client.apiClient.Events <- &testEvent{
+	// Load the mock stream up with a "delete_feature" event:
+	client.events <- &testEvent{
 		data:  `{"id":"id-featuretodelete","key":"featuretodelete","type":"BOOLEAN","value":false,"version":2}`,
 		event: "delete_feature",
 	}
 
-	// Load the mock apiClient up with a "config_stale" event:
-	client.apiClient.Events <- &testEvent{
+	// Load the mock stream up with a "config_stale" event:
+	client.events <- &testEvent{
 		data:  `{"edge.stale":true}`,
 		event: "config",
 	}

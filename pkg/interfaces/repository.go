@@ -119,12 +119,16 @@ type FeatureHubConfig interface {
 	FeaturesURL() string
 	PollingFeaturesURL() string
 	Timeout() time.Duration
+	SSEReadTimeout() time.Duration
+	SSEMaxRetryDelay() time.Duration
 	EdgeType() models.EdgeType
 
 	// Configuration (fluent)
 	WithSDKKey(key string) FeatureHubConfig
 	WithLogLevel(logLevel logrus.Level) FeatureHubConfig
 	WithWaitForData(value time.Duration) FeatureHubConfig
+	WithSSEReadTimeout(value time.Duration) FeatureHubConfig
+	WithSSEMaxRetryDelay(value time.Duration) FeatureHubConfig
 	WithFatalErrorHandler(fatalErrorFunc ErrorFunc) FeatureHubConfig
 	RegisterUsagePlugin(plugin usage.Plugin) FeatureHubConfig
 	AddValueInterceptor(valueInterceptor FeatureValueInterceptor)

@@ -2,38 +2,58 @@ package streamingclient
 
 import (
 	"encoding/json"
+	goerrors "errors"
+	"net/http"
 
-	"github.com/donovanhide/eventsource"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
+	"github.com/launchdarkly/eventsource"
 )
 
-// handleErrors deals with incoming server-side errors:
-func (c *StreamingClient) handleErrors() {
+// statusStale is the HTTP status the server uses to tell the client to stop (the same as edge.stale):
+const statusStale = 236
 
-	// Run forever (blocks on receiving events from the client channel):
-	for {
-		event := <-c.apiClient.Errors
+// handleStreamError is called by the eventsource library for connection errors (including read timeouts and
+// non-200 responses to a reconnect). The stream reconnects (sending the Last-Event-ID, after a backoff delay)
+// unless the client has been closed, the server has told us to stop (236), or the request was rejected
+// (400/401/403/404 - a bad SDK key, or the client pointed at the wrong server):
+func (c *StreamingClient) handleStreamError(err error) eventsource.StreamErrorHandlerResult {
+	closeNow := eventsource.StreamErrorHandlerResult{CloseNow: true}
 
-		// We may have been shut down by some external process:
-		if !c.isRunning {
-			c.logger.Info("No longer handling SSE errors")
-			break
-		}
-
-		c.logger.WithError(event).Trace("Error from API client")
+	if c.stopped.Load() {
+		return closeNow
 	}
+
+	var subscriptionErr eventsource.SubscriptionError
+	if goerrors.As(err, &subscriptionErr) {
+		switch subscriptionErr.Code {
+		case statusStale:
+			c.logger.Warn("The FeatureHub server has requested that we stop (236)! No further updates will be received - existing data will continue to be served")
+			c.Close()
+			return closeNow
+
+		case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+			// the same statuses the polling client treats as fatal: the key is invalid or does not exist, or the
+			// server address is wrong. Retrying will not help, so stop for good
+			c.Close()
+			details := map[string]interface{}{"status": subscriptionErr.Code, "message": subscriptionErr.Message}
+			c.reportFatalError(&errors.ErrFromAPI{}, "The FeatureHub server rejected the SDK key or server address, stopping", details)
+			return closeNow
+		}
+	}
+
+	c.logger.WithError(err).Debug("Error from SSE stream, reconnecting")
+	return eventsource.StreamErrorHandlerResult{}
 }
 
 // handleEvents deals with incoming server-side events:
 func (c *StreamingClient) handleEvents() {
 
-	// Run forever (blocks on receiving events from the client channel):
-	for {
-		event := <-c.apiClient.Events
+	// Run until the stream is closed (blocks on receiving events from the client channel):
+	for event := range c.events {
 
 		// We may have been shut down by some external process:
-		if !c.isRunning {
+		if !c.isRunning.Load() {
 			c.logger.Info("No longer handling SSE events")
 			break
 		}
@@ -71,7 +91,7 @@ func (c *StreamingClient) handleEvents() {
 				"event":   event.Event(),
 				"message": event.Data(),
 			}
-			c.fatalErrorHandler(&errors.ErrFromAPI{}, "Failure from FeatureHub server", details)
+			c.reportFatalError(&errors.ErrFromAPI{}, "Failure from FeatureHub server", details)
 
 		// One specific feature (replaces the previous version):
 		case models.FHFeature:
@@ -112,12 +132,12 @@ func (c *StreamingClient) handleSSEError(event eventsource.Event) {
 	if c.repository.IsReady() {
 		c.logger.WithError(&errors.ErrFromAPI{}).WithField("event", event.Event()).WithField("message", event.Data()).Error("Error from API client")
 	} else {
-		// Use the fatalErrorFunc for this one:
+		// Use the fatal error handler for this one:
 		details := map[string]interface{}{
 			"event":   event.Event(),
 			"message": event.Data(),
 		}
-		c.fatalErrorFunc(&errors.ErrFromAPI{}, "Error from API client", details)
+		c.reportFatalError(&errors.ErrFromAPI{}, "Error from API client", details)
 	}
 }
 
@@ -132,9 +152,8 @@ func (c *StreamingClient) handleFHConfigEvent(event eventsource.Event) {
 	// Handle "edge.stale" config:
 	if configEvent.EdgeStale {
 
-		// Close the SSE client connection:
+		// Close the client for good - it will not reconnect, and cannot be connected again:
 		c.logger.Warn("The FeatureHub server has requested that we close our connection (edge.stale)! No further updates will be received - existing data will continue to be served")
-		c.isRunning = false
-		c.apiClient.Close()
+		c.Close()
 	}
 }

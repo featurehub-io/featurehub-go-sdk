@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/donovanhide/eventsource"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/core"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
@@ -32,19 +31,18 @@ func TestStreamingClientFeatures(t *testing.T) {
 	repo := core.NewClientFeatureHubRepository(logger)
 	config.SetRepository(repo)
 
-	// Use the config to make a new StreamingClient with a mock apiClient
+	// Use the config to make a new StreamingClient with a mock stream
+	stream := newFakeStream(100)
 	client := &StreamingClient{
-		apiClient: &eventsource.Stream{
-			Errors: make(chan error, 100),
-			Events: make(chan eventsource.Event, 100),
-		},
-		config:     config,
-		logger:     logger,
-		repository: repo,
+		cancelRequest: stream.Close,
+		events:        stream.events,
+		config:        config,
+		logger:        logger,
+		repository:    repo,
 	}
 
-	// Load the mock apiClient up with a "features" event:
-	client.apiClient.Events <- &testEvent{
+	// Load the mock stream up with a "features" event:
+	client.events <- &testEvent{
 		data:  `[{"id":"id-bool","key":"booleanfeature","type":"BOOLEAN","value":true},{"id":"id-json","key":"jsonfeature","type":"JSON","value":"{\"is_crufty\": true}"},{"id":"id-num","key":"numberfeature","type":"NUMBER","value":123456789},{"id":"id-str","key":"stringfeature","type":"STRING","value":"this is a string"}]`,
 		event: "features",
 	}

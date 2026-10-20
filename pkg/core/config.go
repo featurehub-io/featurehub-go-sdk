@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
@@ -15,6 +16,15 @@ import (
 )
 
 const defaultLogLevel = logrus.InfoLevel
+
+// DefaultSSEReadTimeout is how long a streaming connection may go without data before reconnecting. FeatureHub
+// holds an idle connection open (e.g. when the Last-Event-ID is current) for around 3 minutes before sending
+// "bye", so the default is longer than that.
+const DefaultSSEReadTimeout = 4 * time.Minute
+
+// DefaultSSEMaxRetryDelay is the longest a streaming connection waits before reconnecting. The delay doubles on
+// each consecutive failed reconnect until it reaches this.
+const DefaultSSEMaxRetryDelay = time.Minute
 
 // Config defines parameters for the repository:
 type Config struct {
@@ -27,9 +37,11 @@ type Config struct {
 	repository        *ClientFeatureHubRepository // A FeatureHub repository implementation
 	usageAdapter      *usage.Adapter
 	EdgeProvider      EdgeProviderFunc
-	fatalErrorHandler *interfaces.ErrorFunc // A user-provided handler func for fatal asynchronous errors
+	fatalErrorHandler atomic.Pointer[interfaces.ErrorFunc] // A user-provided handler func for fatal asynchronous errors, read by edge clients' goroutines
 	requestedEdgeType models.EdgeType
 	timeout           time.Duration // timeout if using polling
+	sseReadTimeout    time.Duration // how long a streaming connection may go without receiving data before reconnecting
+	sseMaxRetryDelay  time.Duration // the longest delay between streaming reconnect attempts
 	client            interfaces.EdgeClient
 	closed            bool
 }
@@ -61,6 +73,8 @@ func NewConfig(serverAddress, sdkKey string, edgeProvider EdgeProviderFunc) *Con
 		ServerAddress:     serverAddress,
 		EdgeProvider:      edgeProvider,
 		timeout:           timeout,
+		sseReadTimeout:    EnvOrDefaultDuration("FEATUREHUB_SSE_READ_TIMEOUT", DefaultSSEReadTimeout),
+		sseMaxRetryDelay:  EnvOrDefaultDuration("FEATUREHUB_SSE_MAX_RETRY_DELAY", DefaultSSEMaxRetryDelay),
 	}
 }
 
@@ -91,12 +105,8 @@ func (c *Config) Build(context *models.Context) (interfaces.FeatureHubConfig, er
 		return c, nil
 	}
 
-	if c.client == nil {
-		return c.connect(new(context.GenerateHeader()))
-	} else {
-		c.client.ContextChange(context.GenerateHeader())
-		return c, nil
-	}
+	// connect sends the header to an existing client, or makes and connects one, and reports a stopped client
+	return c.connect(new(context.GenerateHeader()))
 }
 
 func (c *Config) SetRepository(repository *ClientFeatureHubRepository) {
@@ -184,6 +194,19 @@ func (c *Config) ReadinessListener(context context.Context, callbackFunc func(co
 }
 
 func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
+	// An existing edge client is already connected, so it is not connected again. One that has stopped for good
+	// (e.g. edge.stale) stays stopped and is reported as an error. Streaming(), ActiveRest() and PassiveRest()
+	// discard the client, so the next connect makes a new one.
+	if c.client != nil {
+		if c.client.Stopped() {
+			return c, errors.NewErrEdgeStopped()
+		}
+		if header != nil {
+			c.client.ContextChange(*header)
+		}
+		return c, nil
+	}
+
 	provider, err := c.EdgeProvider(c, c.checkRepository())
 
 	if err != nil {
@@ -197,6 +220,11 @@ func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
 	}
 
 	c.client.Connect()
+
+	// the client may have been stopped straight away, e.g. the server rejected the SDK key
+	if c.client.Stopped() {
+		return c, errors.NewErrEdgeStopped()
+	}
 
 	return c, nil
 }
@@ -291,14 +319,60 @@ func (c *Config) WithContext(context *models.Context) interfaces.Context {
 
 // WithFatalErrorHandler configures an error handler which will be called for asynchronous fatal errors:
 func (c *Config) WithFatalErrorHandler(fatalErrorFunc interfaces.ErrorFunc) interfaces.FeatureHubConfig {
-	c.fatalErrorHandler = &fatalErrorFunc
+	c.fatalErrorHandler.Store(&fatalErrorFunc)
 	return c
+}
+
+// FatalErrorHandler returns the handler set with WithFatalErrorHandler, or nil if none is set:
+func (c *Config) FatalErrorHandler() interfaces.ErrorFunc {
+	handler := c.fatalErrorHandler.Load()
+	if handler == nil {
+		return nil
+	}
+	return *handler
 }
 
 // WithLogLevel adds a logLevel to the config:
 func (c *Config) WithLogLevel(logLevel logrus.Level) interfaces.FeatureHubConfig {
 	c.LogLevel = logLevel
 	return c
+}
+
+// WithSSEReadTimeout sets how long a streaming (SSE) connection may go without receiving any data before
+// the client drops it and reconnects (sending the Last-Event-ID). The server keeps an idle connection open
+// and sends "bye" before closing it, so this should be longer than the server's connection time.
+// It can also be set with the FEATUREHUB_SSE_READ_TIMEOUT environment variable (e.g. "5m").
+// A value of zero (or less) means DefaultSSEReadTimeout is used; the timeout cannot be turned off.
+func (c *Config) WithSSEReadTimeout(value time.Duration) interfaces.FeatureHubConfig {
+	c.sseReadTimeout = value
+	return c
+}
+
+// SSEReadTimeout returns the streaming read timeout, or DefaultSSEReadTimeout if it is zero or less:
+func (c *Config) SSEReadTimeout() time.Duration {
+	if c.sseReadTimeout <= 0 {
+		return DefaultSSEReadTimeout
+	}
+	return c.sseReadTimeout
+}
+
+// WithSSEMaxRetryDelay sets the longest a streaming (SSE) connection waits before reconnecting. The delay
+// starts at the server's retry interval (3 seconds by default) and doubles on each consecutive failed reconnect
+// until it reaches this. Each delay is also reduced by a random amount of up to half, so that clients do not
+// all reconnect at once after an outage.
+// It can also be set with the FEATUREHUB_SSE_MAX_RETRY_DELAY environment variable (e.g. "2m").
+// A value of zero (or less) means DefaultSSEMaxRetryDelay is used.
+func (c *Config) WithSSEMaxRetryDelay(value time.Duration) interfaces.FeatureHubConfig {
+	c.sseMaxRetryDelay = value
+	return c
+}
+
+// SSEMaxRetryDelay returns the longest streaming reconnect delay, or DefaultSSEMaxRetryDelay if it is zero or less:
+func (c *Config) SSEMaxRetryDelay() time.Duration {
+	if c.sseMaxRetryDelay <= 0 {
+		return DefaultSSEMaxRetryDelay
+	}
+	return c.sseMaxRetryDelay
 }
 
 // WithWaitForData adds a WaitForData config:

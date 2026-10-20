@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/donovanhide/eventsource"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/core"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -20,22 +19,21 @@ func newReviewTestClient(waitFor time.Duration) (*StreamingClient, *core.ClientF
 	repo := core.NewClientFeatureHubRepository(logger)
 	config.SetRepository(repo)
 
+	stream := newFakeStream(100)
 	return &StreamingClient{
-		apiClient: &eventsource.Stream{
-			Errors: make(chan error, 100),
-			Events: make(chan eventsource.Event, 100),
-		},
-		config:     config,
-		logger:     logger,
-		repository: repo,
+		cancelRequest: stream.Close,
+		events:        stream.events,
+		config:        config,
+		logger:        logger,
+		repository:    repo,
 	}, repo
 }
 
 func TestMalformedFeaturesEventDoesNotStopEventHandling(t *testing.T) {
 	client, repo := newReviewTestClient(2 * time.Second)
 
-	client.apiClient.Events <- &testEvent{event: "features", data: `not json`}
-	client.apiClient.Events <- &testEvent{event: "features", data: `[{"id":"1","key":"flag","type":"BOOLEAN","value":true,"version":1}]`}
+	client.events <- &testEvent{event: "features", data: `not json`}
+	client.events <- &testEvent{event: "features", data: `[{"id":"1","key":"flag","type":"BOOLEAN","value":true,"version":1}]`}
 
 	client.Connect()
 

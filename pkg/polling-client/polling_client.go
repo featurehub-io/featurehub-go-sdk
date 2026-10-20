@@ -2,6 +2,7 @@ package pollingclient
 
 import (
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
@@ -106,7 +107,7 @@ func (c *FeatureHubPollingClient) Poll() error {
 
 	if !c.startable {
 		c.mu.Unlock()
-		return fherrors.NewErrBadConfig("polling stopped: server returned a fatal error")
+		return fherrors.NewErrBadConfig("polling stopped: the client was closed, or the server rejected the key or told it to stop")
 	}
 
 	// Active: a timer or in-flight poll already covers the next poll.
@@ -131,7 +132,23 @@ func (c *FeatureHubPollingClient) Poll() error {
 // Used for server-side feature evaluation when the user context changes.
 func (c *FeatureHubPollingClient) ContextChange(header string) {
 	c.polling.AttributeHeader(header)
+
+	c.mu.Lock()
+	startable := c.startable
+	c.mu.Unlock()
+	if !startable {
+		return
+	}
+
 	go c.pollFunc(nil, nil)
+}
+
+// Stopped reports whether the client has stopped for good: it was closed, the server told it to stop (236),
+// or the server rejected the API key or server address. A stopped client never polls again.
+func (c *FeatureHubPollingClient) Stopped() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.startable
 }
 
 // Close stops the polling client and any pending timers.
@@ -154,6 +171,16 @@ func (c *FeatureHubPollingClient) stop() {
 	c.polling.Stop()
 }
 
+// isFatalStatus reports whether an HTTP status means polling can never succeed: a bad or unknown API key, or
+// a server address that points somewhere other than FeatureHub.
+func isFatalStatus(status int) bool {
+	switch status {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return true
+	}
+	return false
+}
+
 // pollFunc performs one poll cycle and schedules the next one if appropriate.
 // resolve/reject are optional callbacks for callers that need notification.
 func (c *FeatureHubPollingClient) pollFunc(resolve func(), reject func(error)) {
@@ -163,10 +190,13 @@ func (c *FeatureHubPollingClient) pollFunc(resolve func(), reject func(error)) {
 
 	err := c.polling.Poll()
 	if err != nil {
-		if httpErr, ok := errors.AsType[*HTTPError](err); ok && (httpErr.StatusCode == 404 || httpErr.StatusCode == 400) {
-			// Fatal: the API key is invalid or not found — stop polling.
-			if httpErr.StatusCode == 404 {
+		if httpErr, ok := errors.AsType[*HTTPError](err); ok && isFatalStatus(httpErr.StatusCode) {
+			// Fatal: the API key is invalid or not found, or the server address is wrong — stop polling for good.
+			switch httpErr.StatusCode {
+			case http.StatusNotFound:
 				c.logger.Error("The API key provided does not exist, stopping polling.")
+			case http.StatusUnauthorized, http.StatusForbidden:
+				c.logger.WithField("status", httpErr.StatusCode).Error("The server refused the request (check the server address and API key), stopping polling.")
 			}
 			c.mu.Lock()
 			c.startable = false
@@ -185,6 +215,24 @@ func (c *FeatureHubPollingClient) pollFunc(resolve func(), reject func(error)) {
 		// it is successful or fails out completey.
 		if !pollingBusy {
 			c.scheduleNextPoll(resolve, reject)
+		}
+		return
+	}
+
+	// 236: the server has told us to stop (the same as SSE edge.stale). Stop for good - Connect, Poll and
+	// ContextChange will no longer poll:
+	if c.polling.Stopped() {
+		c.mu.Lock()
+		wasStartable := c.startable
+		c.startable = false
+		c.mu.Unlock()
+		if wasStartable {
+			c.logger.Warn("The FeatureHub server has requested that we stop polling (236)! No further updates will be received - existing data will continue to be served")
+		}
+		c.stop()
+
+		if resolve != nil {
+			resolve()
 		}
 		return
 	}
@@ -213,8 +261,8 @@ func (c *FeatureHubPollingClient) scheduleNextPoll(
 		c.mu.Lock()
 		defer c.mu.Unlock()
 
-		// don't schedule anything once closed, or once the server has told us to stop (e.g. a 236 response)
-		if !c.startable || c.polling.Stopped() {
+		// don't schedule anything once stopped (closed, or stopped by the server - see pollFunc)
+		if !c.startable {
 			return
 		}
 

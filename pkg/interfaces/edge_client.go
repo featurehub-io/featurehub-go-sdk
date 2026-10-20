@@ -9,4 +9,7 @@ type EdgeClient interface {
 	ContextChange(header string)
 	// Close - stops and shuts down the client
 	Close()
+	// Stopped - true once the client has stopped for good (closed, told to stop by the server, or its requests
+	// were rejected). A stopped client never connects again.
+	Stopped() bool
 }

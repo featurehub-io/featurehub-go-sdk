@@ -143,6 +143,7 @@ type mockEdgeClient struct {
 	pollCalls         atomic.Int32 // Poll is called from the usage plugin's goroutine
 	connectCalls      int
 	contextChangeArgs []string
+	stopped           bool
 }
 
 func (m *mockEdgeClient) Connect()    { m.connectCalls++ }
@@ -150,7 +151,8 @@ func (m *mockEdgeClient) Poll() error { m.pollCalls.Add(1); return nil }
 func (m *mockEdgeClient) ContextChange(h string) {
 	m.contextChangeArgs = append(m.contextChangeArgs, h)
 }
-func (m *mockEdgeClient) Close() {}
+func (m *mockEdgeClient) Close()        {}
+func (m *mockEdgeClient) Stopped() bool { return m.stopped }
 
 func newMockEdgeProvider(client *mockEdgeClient) EdgeProviderFunc {
 	return func(_ *Config, _ interfaces.InternalRepository) (interfaces.EdgeClient, error) {
@@ -477,4 +479,77 @@ func TestOpenConfigIsClosedFalse(t *testing.T) {
 	})
 	cfg := NewConfig("http://server", "env/key*", ep)
 	assert.False(t, cfg.IsClosed())
+}
+
+func TestConnectReusesExistingEdgeClient(t *testing.T) {
+	mockClient := &mockEdgeClient{}
+	providerCalls := 0
+	config := NewConfig("http://localhost", "default/env/key", func(_ *Config, _ interfaces.InternalRepository) (interfaces.EdgeClient, error) {
+		providerCalls++
+		return mockClient, nil
+	})
+
+	_, err := config.Connect()
+	require.NoError(t, err)
+	_, err = config.Connect()
+	require.NoError(t, err)
+
+	// the existing client is kept, and not connected a second time
+	assert.Equal(t, 1, providerCalls)
+	assert.Equal(t, 1, mockClient.connectCalls)
+
+	// changing the edge type discards the client, so the next Connect makes a new one
+	config.Streaming()
+	_, err = config.Connect()
+	require.NoError(t, err)
+	assert.Equal(t, 2, providerCalls)
+}
+
+func TestConnectWithStoppedEdgeClientReturnsError(t *testing.T) {
+	mockClient := &mockEdgeClient{}
+	providerCalls := 0
+	config := NewConfig("http://localhost", "default/env/key", func(_ *Config, _ interfaces.InternalRepository) (interfaces.EdgeClient, error) {
+		providerCalls++
+		return mockClient, nil
+	})
+
+	_, err := config.Connect()
+	require.NoError(t, err)
+
+	// e.g. the server sent edge.stale
+	mockClient.stopped = true
+
+	_, err = config.Connect()
+	var stoppedErr *errors.ErrEdgeStopped
+	assert.ErrorAs(t, err, &stoppedErr)
+	assert.Equal(t, 1, providerCalls, "a stopped client is not replaced")
+	assert.Equal(t, 1, mockClient.connectCalls, "a stopped client is not connected again")
+}
+
+func TestConnectReturnsErrorWhenClientStopsStraightAway(t *testing.T) {
+	// e.g. the server rejected the SDK key on the first request
+	mockClient := &mockEdgeClient{stopped: true}
+	config := NewConfig("http://localhost", "default/env/key", newMockEdgeProvider(mockClient))
+
+	_, err := config.Connect()
+	var stoppedErr *errors.ErrEdgeStopped
+	assert.ErrorAs(t, err, &stoppedErr)
+}
+
+func TestBuildWithStoppedEdgeClientReturnsError(t *testing.T) {
+	mockClient := &mockEdgeClient{}
+	config := NewConfig("http://localhost", "default/env/key", newMockEdgeProvider(mockClient))
+
+	_, err := config.Build(&models.Context{Userkey: "fred"})
+	require.NoError(t, err)
+	_, err = config.Build(&models.Context{Userkey: "mary"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, mockClient.connectCalls)
+	assert.Len(t, mockClient.contextChangeArgs, 2)
+
+	mockClient.stopped = true
+	_, err = config.Build(&models.Context{Userkey: "sue"})
+	var stoppedErr *errors.ErrEdgeStopped
+	assert.ErrorAs(t, err, &stoppedErr)
+	assert.Len(t, mockClient.contextChangeArgs, 2, "a stopped client is not sent the new context")
 }

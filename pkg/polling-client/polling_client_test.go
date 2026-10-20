@@ -420,3 +420,44 @@ func TestNoTimerScheduledWhenPollerStoppedByServer(t *testing.T) {
 	assert.Nil(t, c.currentTimer)
 	c.mu.Unlock()
 }
+
+func TestServerStopMakesClientUnstartable(t *testing.T) {
+	// a 236 response leaves the poller stopped after a successful poll
+	mock := &mockPollingService{frequency: 10 * time.Millisecond, stopped: true}
+	c, _ := newTestClient(true, mock)
+
+	c.pollFunc(nil, nil)
+
+	c.mu.Lock()
+	assert.False(t, c.startable, "a client stopped by the server cannot be started again")
+	c.mu.Unlock()
+
+	pollsBefore := mock.getPollCount()
+	c.Connect()
+	c.ContextChange("userkey=fred")
+	assert.Error(t, c.Poll())
+
+	time.Sleep(40 * time.Millisecond)
+	assert.Equal(t, pollsBefore, mock.getPollCount(), "no further polls once the server has told us to stop")
+}
+
+func TestFatal401And403StopClient(t *testing.T) {
+	for _, status := range []int{401, 403} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			mock := &mockPollingService{
+				frequency: time.Hour,
+				pollErr:   &HTTPError{StatusCode: status, Message: fmt.Sprint(status)},
+			}
+			c, _ := newTestClient(true, mock)
+
+			c.pollFunc(nil, nil)
+
+			c.mu.Lock()
+			startable := c.startable
+			c.mu.Unlock()
+			assert.False(t, startable, "a refused request cannot succeed, so polling stops for good")
+			assert.True(t, mock.Stopped())
+			assert.Error(t, c.Poll())
+		})
+	}
+}
