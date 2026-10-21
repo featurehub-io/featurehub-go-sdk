@@ -110,9 +110,10 @@ The client stops for good, and does not reconnect, when:
 
 When the client stops because of an error (anything other than `edge.stale` or `236`), the error is passed to the
 fatal error handler set with `WithFatalErrorHandler`, or logged if there is none. The SDK never stops the host
-process - what to do is up to the handler. The handler is called once per client, and can be called while
-`Connect()` is still running (for example when the first request is rejected). It may close the config, but a
-`Connect()` or `Build()` started from inside it is refused with an `*errors.ErrBadConfig`.
+process - what to do is up to the handler. The handler is called once per client, on its own goroutine, so it can
+safely call back into the config (for example `Close()`). If the error happens during `Connect()` or `Build()`
+(for example the first request is rejected), they return it too, and the handler may run after they return.
+`Connect()`, `Build()` and `Close()` can be called from several goroutines; they take turns.
 
 Once the client has stopped, `Connect()` and `Build()` return an `*errors.ErrEdgeStopped` error. Its `Cause`
 (also available with `errors.Unwrap`) says why, for example a rejected key with its HTTP status. Use `errors.Is`

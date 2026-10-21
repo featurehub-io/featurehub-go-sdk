@@ -178,10 +178,11 @@ func (c *StreamingClient) ContextChange(header string) {
 
 // reportFatalError passes an error that has stopped the client to the handler set on this client, or else to the
 // config (its handler, or a log if it has none). The config is checked each time so that a handler added after
-// Connect is used. The SDK never stops the host process:
+// Connect is used. Handlers run on their own goroutine, as the config does, so they never run inside Connect. The
+// SDK never stops the host process:
 func (c *StreamingClient) reportFatalError(err error, message string, details map[string]interface{}) {
 	if override := c.fatalErrorHandler.Load(); override != nil {
-		(*override)(err, message, details)
+		go (*override)(err, message, details)
 	} else if c.config != nil {
 		c.config.ReportFatalError(err, message, details)
 	} else {
@@ -245,9 +246,6 @@ func (c *StreamingClient) Stopped() bool {
 func (c *StreamingClient) StopReason() error {
 	if reason := c.stopReason.Load(); reason != nil {
 		return *reason
-	}
-	if c.stopped.Load() {
-		return errors.ErrClientClosed
 	}
 	return nil
 }

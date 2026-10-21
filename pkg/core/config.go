@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -42,10 +43,9 @@ type Config struct {
 	timeout           time.Duration // timeout if using polling
 	sseReadTimeout    time.Duration // how long a streaming connection may go without receiving data before reconnecting
 	sseMaxRetryDelay  time.Duration // the longest delay between streaming reconnect attempts
+	edgeMu            sync.Mutex    // guards client, and makes Connect, Build, Close and the edge type changes take turns
 	client            interfaces.EdgeClient
-	edgeGeneration    int  // incremented whenever the edge client is discarded, so connect can tell it happened
-	connecting        bool // set while connect runs, so the fatal error handler cannot start another connect
-	closed            bool
+	closed            atomic.Bool
 }
 
 // NewConfig returns a configured Config:
@@ -90,8 +90,8 @@ func (p *passiveRestPollPlugin) CanSendAsync() bool                           { 
 func (p *passiveRestPollPlugin) Close()                                       {}
 
 func (p *passiveRestPollPlugin) Send(ctx context.Context, _ usage.UsageEvent) context.Context {
-	if p.config.client != nil && p.config.requestedEdgeType == models.EdgePassiveRest {
-		p.config.client.Poll() //nolint:errcheck
+	if client := p.config.edgeClient(); client != nil && p.config.requestedEdgeType == models.EdgePassiveRest {
+		client.Poll() //nolint:errcheck
 	}
 	return ctx
 }
@@ -100,7 +100,7 @@ func (p *passiveRestPollPlugin) Send(ctx context.Context, _ usage.UsageEvent) co
 // you can have multiple connections ONLY if you have multiple instances of Config. All state is being evaluated on the server,
 // no strategies are being sent back to the client.
 func (c *Config) Build(context *models.Context) (interfaces.FeatureHubConfig, error) {
-	if c.closed {
+	if c.closed.Load() {
 		return nil, errors.NewErrConfigClosed()
 	}
 	if c.ClientEvaluated() {
@@ -122,8 +122,15 @@ func (c *Config) SetRepository(repository *ClientFeatureHubRepository) {
 	}
 }
 
+// edgeClient returns the current edge client, or nil:
+func (c *Config) edgeClient() interfaces.EdgeClient {
+	c.edgeMu.Lock()
+	defer c.edgeMu.Unlock()
+	return c.client
+}
+
+// closeEdge closes and discards the edge client. edgeMu must be held:
 func (c *Config) closeEdge() {
-	c.edgeGeneration++
 	if c.client != nil {
 		c.client.Close()
 		c.client = nil
@@ -133,10 +140,12 @@ func (c *Config) closeEdge() {
 // Close shuts down the edge client, releases all interceptors and plugins, nils all
 // internal references, and marks the config as closed. Idempotent.
 func (c *Config) Close() {
-	if c.closed {
+	c.edgeMu.Lock()
+	defer c.edgeMu.Unlock()
+	if c.closed.Load() {
 		return
 	}
-	c.closed = true
+	c.closed.Store(true)
 	c.closeEdge()
 	if c.repository != nil {
 		c.repository.Close()
@@ -150,10 +159,12 @@ func (c *Config) Close() {
 
 // IsClosed reports whether Close has been called on this Config.
 func (c *Config) IsClosed() bool {
-	return c.closed
+	return c.closed.Load()
 }
 
 func (c *Config) PassiveRest(interval time.Duration) *Config {
+	c.edgeMu.Lock()
+	defer c.edgeMu.Unlock()
 	c.closeEdge()
 	c.requestedEdgeType = models.EdgePassiveRest
 	c.timeout = interval
@@ -161,6 +172,8 @@ func (c *Config) PassiveRest(interval time.Duration) *Config {
 }
 
 func (c *Config) ActiveRest(timeout time.Duration) *Config {
+	c.edgeMu.Lock()
+	defer c.edgeMu.Unlock()
 	c.closeEdge()
 	c.requestedEdgeType = models.EdgeActiveRest
 	c.timeout = timeout
@@ -168,6 +181,8 @@ func (c *Config) ActiveRest(timeout time.Duration) *Config {
 }
 
 func (c *Config) Streaming() *Config {
+	c.edgeMu.Lock()
+	defer c.edgeMu.Unlock()
 	c.closeEdge()
 	c.requestedEdgeType = models.EdgeStreaming
 	c.timeout = time.Millisecond * 0
@@ -181,7 +196,7 @@ func (c *Config) EdgeType() models.EdgeType {
 // IsReady - Is the repository ready, does it have its initial state?
 // delegates to the internal repository. Returns false if the config has been closed.
 func (c *Config) IsReady() bool {
-	if c.closed {
+	if c.closed.Load() {
 		return false
 	}
 	return c.checkRepository().IsReady()
@@ -190,64 +205,26 @@ func (c *Config) IsReady() bool {
 // ReadinessListener - Configure the SDK with a function to call when we're ready (up and running with some data)
 // delegates to the internal repository. No-op if the config has been closed.
 func (c *Config) ReadinessListener(context context.Context, callbackFunc func(context context.Context)) {
-	if c.closed {
+	if c.closed.Load() {
 		return
 	}
 	c.checkRepository().ReadinessListener(context, callbackFunc)
 }
 
 func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
-	// The fatal error handler can run during connect (e.g. a rejected SDK key on the first request), and user
-	// code there must not start another connect - with a rejected key that would call the handler again, forever:
-	if c.connecting {
-		return c, errors.NewErrBadConfig("Connect or Build was called while already connecting (e.g. from the fatal error handler)")
-	}
-	c.connecting = true
-	defer func() { c.connecting = false }()
-
-	// An existing edge client is already connected, so it is not connected again. One that has stopped for good
-	// (e.g. edge.stale) stays stopped and is reported as an error. Streaming(), ActiveRest() and PassiveRest()
-	// discard the client, so the next connect makes a new one.
-	if c.client != nil {
-		if c.client.Stopped() {
-			return c, errors.NewErrEdgeStopped(c.client.StopReason())
-		}
-		if header != nil {
-			c.client.ContextChange(*header)
-		}
-		return c, nil
-	}
-
-	generation := c.edgeGeneration
-	client, err := c.EdgeProvider(c, c.checkRepository())
-
-	if err != nil {
+	client, err := c.edgeClientFor(header)
+	if client == nil || err != nil {
 		return c, err
 	}
 
-	// The fatal error handler may have closed the config, or discarded the edge client (e.g. ActiveRest()),
-	// while the client was being made. It is not used:
-	if generation != c.edgeGeneration {
-		client.Close()
-		return c, errors.NewErrEdgeStopped(client.StopReason())
-	}
-
-	c.client = client
-
-	// The checks below use client rather than c.client, as the fatal error handler may discard c.client.
-
-	// the client may be stopped before it connects (e.g. the server rejected the SDK key on the first request)
-	if client.Stopped() {
-		return c, errors.NewErrEdgeStopped(client.StopReason())
-	}
-
-	if header != nil {
-		client.ContextChange(*header)
-	}
-
+	// Connect runs without edgeMu, as it can wait for data. The fatal error handler always runs on its own
+	// goroutine, so it never runs inside connect, but it (or another goroutine) may Close the config meanwhile:
 	client.Connect()
 
-	// or while connecting (e.g. a rejected first poll, or edge.stale)
+	if c.closed.Load() {
+		return nil, errors.NewErrConfigClosed()
+	}
+	// the client may have stopped while connecting (e.g. a rejected first poll, or edge.stale)
 	if client.Stopped() {
 		return c, errors.NewErrEdgeStopped(client.StopReason())
 	}
@@ -255,9 +232,49 @@ func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
 	return c, nil
 }
 
+// edgeClientFor returns a new edge client that needs connecting, or nil if there is already a client (which is
+// sent the header). It returns ErrEdgeStopped if the client has stopped. Streaming(), ActiveRest() and
+// PassiveRest() discard the client, so the next connect makes a new one:
+func (c *Config) edgeClientFor(header *string) (interfaces.EdgeClient, error) {
+	c.edgeMu.Lock()
+	defer c.edgeMu.Unlock()
+
+	if c.closed.Load() {
+		return nil, errors.NewErrConfigClosed()
+	}
+
+	// An existing edge client is already connected, so it is not connected again. One that has stopped for good
+	// (e.g. edge.stale) stays stopped and is reported as an error:
+	if c.client != nil {
+		if c.client.Stopped() {
+			return nil, errors.NewErrEdgeStopped(c.client.StopReason())
+		}
+		if header != nil {
+			c.client.ContextChange(*header)
+		}
+		return nil, nil
+	}
+
+	client, err := c.EdgeProvider(c, c.checkRepository())
+	if err != nil {
+		return nil, err
+	}
+	c.client = client
+
+	// the client may be stopped before it connects (e.g. the server rejected the SDK key on the first request)
+	if client.Stopped() {
+		return nil, errors.NewErrEdgeStopped(client.StopReason())
+	}
+
+	if header != nil {
+		client.ContextChange(*header)
+	}
+	return client, nil
+}
+
 // Connect prepares a repository and connects to the configured FH server:
 func (c *Config) Connect() (interfaces.FeatureHubConfig, error) {
-	if c.closed {
+	if c.closed.Load() {
 		return nil, errors.NewErrConfigClosed()
 	}
 	return c.connect(nil)
@@ -266,7 +283,7 @@ func (c *Config) Connect() (interfaces.FeatureHubConfig, error) {
 // NewContext returns a ClientWithContext, with default context values.
 // Returns nil if the config has been closed.
 func (c *Config) NewContext() interfaces.Context {
-	if c.closed {
+	if c.closed.Load() {
 		return nil
 	}
 	c.checkRepository()
@@ -280,7 +297,7 @@ func (c *Config) NewContext() interfaces.Context {
 }
 
 func (c *Config) RegisterUsagePlugin(plugin usage.Plugin) interfaces.FeatureHubConfig {
-	if c.closed {
+	if c.closed.Load() {
 		return nil
 	}
 	c.checkRepository()
@@ -293,7 +310,7 @@ func (c *Config) RegisterUsagePlugin(plugin usage.Plugin) interfaces.FeatureHubC
 // ensures the repositories are all set correctly and returns the internal one. for use by edge clients to
 // push data into the repository. Returns nil if the config is closed.
 func (c *Config) checkRepository() interfaces.InternalRepository {
-	if c.closed {
+	if c.closed.Load() {
 		return nil
 	}
 	if c.repository == nil {
@@ -332,7 +349,7 @@ func (c *Config) Validate() error {
 // WithContext creates a new context with the passed models.Context.
 // Returns nil if the config has been closed.
 func (c *Config) WithContext(context *models.Context) interfaces.Context {
-	if c.closed {
+	if c.closed.Load() {
 		return nil
 	}
 	c.checkRepository()
@@ -345,19 +362,21 @@ func (c *Config) WithContext(context *models.Context) interfaces.Context {
 
 // WithFatalErrorHandler configures a handler called when an edge client stops for good because of an error
 // (a rejected SDK key or server address, or an error or failure event from the server). The client stops, but
-// the SDK never stops the process: without a handler the error is only logged. The handler may be called while
-// Connect or Build is still running (e.g. the first request is rejected), in which case they also return the
-// error as ErrEdgeStopped. It can be set at any time:
+// the SDK never stops the process: without a handler the error is only logged. The handler runs on its own
+// goroutine, so it may call back into the config (e.g. Close). If the error happens during Connect or Build (e.g.
+// the first request is rejected), they also return it as ErrEdgeStopped. It can be set at any time:
 func (c *Config) WithFatalErrorHandler(fatalErrorFunc interfaces.ErrorFunc) interfaces.FeatureHubConfig {
 	c.fatalErrorHandler.Store(&fatalErrorFunc)
 	return c
 }
 
 // ReportFatalError is used by edge clients when they stop because of an error. It passes the error to the
-// handler set with WithFatalErrorHandler, or logs it if none is set. It never stops the process:
+// handler set with WithFatalErrorHandler, on its own goroutine, or logs it if none is set. It never stops the
+// process:
 func (c *Config) ReportFatalError(err error, message string, details map[string]interface{}) {
 	if handler := c.FatalErrorHandler(); handler != nil {
-		handler(err, message, details)
+		// never on the caller's goroutine, which may be inside Connect holding the config's lock
+		go handler(err, message, details)
 		return
 	}
 	logger := c.Logger
@@ -428,7 +447,7 @@ func (c *Config) WithWaitForData(value time.Duration) interfaces.FeatureHubConfi
 }
 
 func (c *Config) AddValueInterceptor(valueInterceptor interfaces.FeatureValueInterceptor) {
-	if c.closed {
+	if c.closed.Load() {
 		return
 	}
 	c.checkRepository()

@@ -53,8 +53,9 @@ func stopStatus(err error) (eventsource.SubscriptionError, bool) {
 // error handler:
 func (c *StreamingClient) stopForStatus(subscriptionErr eventsource.SubscriptionError) {
 	if subscriptionErr.Code == statusStale {
-		c.stop(errors.NewStopReason(errors.ErrServerRequestedStop, "status 236"))
-		c.logger.Warn("The FeatureHub server has requested that we stop (236)! No further updates will be received - existing data will continue to be served")
+		if c.stop(errors.NewStopReason(errors.ErrServerRequestedStop, "status 236")) {
+			c.logger.Warn("The FeatureHub server has requested that we stop (236)! No further updates will be received - existing data will continue to be served")
+		}
 		return
 	}
 
@@ -173,8 +174,10 @@ func (c *StreamingClient) handleFHConfigEvent(event eventsource.Event) {
 	// Handle "edge.stale" config:
 	if configEvent.EdgeStale {
 
-		// Close the client for good - it will not reconnect, and cannot be connected again:
-		c.logger.Warn("The FeatureHub server has requested that we close our connection (edge.stale)! No further updates will be received - existing data will continue to be served")
-		c.stop(errors.NewStopReason(errors.ErrServerRequestedStop, "edge.stale"))
+		// Close the client for good - it will not reconnect, and cannot be connected again. The warning is only
+		// logged if this stopped it (not if it was already closed):
+		if c.stop(errors.NewStopReason(errors.ErrServerRequestedStop, "edge.stale")) {
+			c.logger.Warn("The FeatureHub server has requested that we close our connection (edge.stale)! No further updates will be received - existing data will continue to be served")
+		}
 	}
 }

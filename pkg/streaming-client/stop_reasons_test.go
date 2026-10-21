@@ -37,6 +37,7 @@ func TestRejectionAfterCloseDoesNotCallFatalHandler(t *testing.T) {
 	// e.g. a 401 that was already being handled when the client was closed
 	client.stopForStatus(eventsource.SubscriptionError{Code: http.StatusUnauthorized, Message: "Unauthorized"})
 
+	time.Sleep(50 * time.Millisecond) // a handler would run on its own goroutine
 	assert.Zero(t, calls.Load(), "the client was closed by the user, not by the rejection")
 	assert.ErrorIs(t, client.StopReason(), errors.ErrClientClosed)
 }
@@ -49,6 +50,8 @@ func TestOnlyTheFirstErrorEventCallsFatalHandler(t *testing.T) {
 	client.stopForEvent(&testEvent{event: string(models.SSEError), data: "first"}, "error")
 	client.stopForEvent(&testEvent{event: string(models.FHFailure), data: "second"}, "failure")
 
+	assert.Eventually(t, func() bool { return calls.Load() >= 1 }, 2*time.Second, 10*time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // handlers run on their own goroutines - give a second one time to show up
 	assert.Equal(t, int32(1), calls.Load())
 	assert.ErrorIs(t, client.StopReason(), errors.ErrServerError)
 	assert.Contains(t, client.StopReason().Error(), "first")

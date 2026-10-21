@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -469,14 +470,15 @@ func TestRejectedPollCallsFatalErrorHandler(t *testing.T) {
 	mock := &mockPollingService{frequency: time.Hour, pollErr: &HTTPError{StatusCode: 401, Message: "401"}}
 	c, _ := newTestClient(true, mock)
 
-	var messages []string
+	var calls atomic.Int32
 	c.config.WithFatalErrorHandler(func(err error, message string, details map[string]interface{}) {
-		messages = append(messages, message)
+		calls.Add(1)
 	})
 
 	c.pollFunc(nil, nil)
 
-	assert.Len(t, messages, 1, "a rejected poll after Connect is passed to the fatal error handler")
+	assert.Eventually(t, func() bool { return calls.Load() == 1 }, 2*time.Second, 10*time.Millisecond,
+		"a rejected poll after Connect is passed to the fatal error handler")
 	assert.True(t, c.Stopped())
 }
 
@@ -484,12 +486,12 @@ func TestRejectedFirstPollDuringConnectCallsFatalErrorHandler(t *testing.T) {
 	mock := &mockPollingService{frequency: time.Hour, pollErr: &HTTPError{StatusCode: 404, Message: "404 Not Found"}}
 	c, _ := newTestClient(true, mock)
 
-	calls := 0
-	c.config.WithFatalErrorHandler(func(error, string, map[string]interface{}) { calls++ })
+	var calls atomic.Int32
+	c.config.WithFatalErrorHandler(func(error, string, map[string]interface{}) { calls.Add(1) })
 
 	c.Connect()
 
-	assert.Equal(t, 1, calls)
+	assert.Eventually(t, func() bool { return calls.Load() == 1 }, 2*time.Second, 10*time.Millisecond)
 	assert.True(t, c.Stopped())
 	assert.Contains(t, c.StopReason().Error(), "404")
 	assert.ErrorIs(t, c.StopReason(), fherrors.ErrKeyRejected)
@@ -499,14 +501,16 @@ func TestRejectedResponseSeenByTwoPollsIsReportedOnce(t *testing.T) {
 	mock := &mockPollingService{frequency: time.Hour, pollErr: &HTTPError{StatusCode: 401, Message: "401"}}
 	c, _ := newTestClient(true, mock)
 
-	calls := 0
-	c.config.WithFatalErrorHandler(func(error, string, map[string]interface{}) { calls++ })
+	var calls atomic.Int32
+	c.config.WithFatalErrorHandler(func(error, string, map[string]interface{}) { calls.Add(1) })
 
 	// e.g. Connect's poll and one started by ContextChange both get the rejection
 	c.pollFunc(nil, nil)
 	c.pollFunc(nil, nil)
 
-	assert.Equal(t, 1, calls)
+	assert.Eventually(t, func() bool { return calls.Load() >= 1 }, 2*time.Second, 10*time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // handlers run on their own goroutines - give a second one time to show up
+	assert.Equal(t, int32(1), calls.Load())
 }
 
 func TestStopReasonForClose(t *testing.T) {

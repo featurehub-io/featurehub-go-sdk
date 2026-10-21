@@ -175,17 +175,19 @@ func TestCloseStopsRealStream(t *testing.T) {
 func TestSSEErrorStopsClientAndCallsFatalErrorHandler(t *testing.T) {
 	client, _ := newTestStreamingClient(t)
 
-	var called bool
-	var details map[string]interface{}
+	called := make(chan map[string]interface{}, 1)
 	client.WithFatalErrorHandler(func(err error, message string, d map[string]interface{}) {
-		called = true
-		details = d
+		called <- d
 	})
 
 	client.handleSSEError(&testEvent{event: string(models.SSEError), data: "bad key"})
 
-	assert.True(t, called, "the custom fatal error handler must be called for an error event")
-	assert.Equal(t, "bad key", details["message"])
+	select {
+	case details := <-called:
+		assert.Equal(t, "bad key", details["message"])
+	case <-time.After(2 * time.Second):
+		t.Fatal("the custom fatal error handler must be called for an error event")
+	}
 	assert.True(t, client.Stopped(), "an error event stops the client for good")
 }
 
@@ -234,7 +236,7 @@ func TestFatalErrorHandlerAddedToConfigAfterClientIsMadeIsUsed(t *testing.T) {
 	select {
 	case message := <-called:
 		assert.Equal(t, "Error from API client, stopping", message)
-	default:
+	case <-time.After(2 * time.Second):
 		t.Fatal("the handler added to the config after the client was made was not called")
 	}
 }
@@ -278,7 +280,7 @@ func TestStreamErrorRejectedRequestStopsClientAndCallsFatalHandler(t *testing.T)
 			select {
 			case message := <-called:
 				assert.Contains(t, message, "rejected the SDK key")
-			default:
+			case <-time.After(2 * time.Second):
 				t.Fatal("the fatal error handler was not called")
 			}
 		})
@@ -397,7 +399,7 @@ func TestFirstConnectionRejectedReturnsStoppedClient(t *testing.T) {
 				select {
 				case message := <-called:
 					assert.Contains(t, message, "rejected the SDK key")
-				default:
+				case <-time.After(2 * time.Second):
 					t.Fatal("the fatal error handler was not called")
 				}
 			}
@@ -484,7 +486,7 @@ func TestErrorAndFailureEventsStopClientEvenWithData(t *testing.T) {
 			select {
 			case message := <-called:
 				assert.Contains(t, message, "stopping")
-			default:
+			case <-time.After(2 * time.Second):
 				t.Fatal("the fatal error handler was not called")
 			}
 		})
