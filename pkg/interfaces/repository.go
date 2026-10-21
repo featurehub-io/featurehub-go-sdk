@@ -106,6 +106,9 @@ type FeatureHubConfig interface {
 	// Feature context creation
 	NewContext() Context
 	WithContext(ctx *models.Context) Context
+	// StartRequest lets request-scoped usage plugins add their state to a request's context (see
+	// usage.RequestScopedPlugin). It is called by core.ContextMiddleware and core.NewRequestContext.
+	StartRequest(ctx context.Context) context.Context
 
 	// Readiness
 	IsReady() bool

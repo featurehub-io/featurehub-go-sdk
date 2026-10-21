@@ -75,8 +75,24 @@ type FeatureHubUsageValue struct {
 	RawValue      interface{}
 }
 
-// NewUsageValue constructs a FeatureHubUsageValue, converting the raw value via the active ConvertFunc.
+// NewUsageValue constructs a FeatureHubUsageValue, converting the raw value via the active ConvertFunc. String
+// and number values may be given as pointers (as GetString/GetNumber return them); they are dereferenced, and a
+// nil pointer is a nil value.
 func NewUsageValue(id, key, environmentID string, value interface{}, valueType models.FeatureValueType) *FeatureHubUsageValue {
+	switch v := value.(type) {
+	case *string:
+		if v == nil {
+			value = nil
+		} else {
+			value = *v
+		}
+	case *float64:
+		if v == nil {
+			value = nil
+		} else {
+			value = *v
+		}
+	}
 	return &FeatureHubUsageValue{
 		ID:            id,
 		Key:           key,
@@ -325,12 +341,31 @@ type Plugin interface {
 	Send(context context.Context, event UsageEvent) context.Context
 	// CanSendAsync reports whether the plugin's Send method may be called in a
 	// separate goroutine. When true, the adapter fires Send concurrently and
-	// ignores its returned context. When false, Send is called synchronously and
-	// its returned context is threaded through to subsequent plugins.
+	// ignores its returned context. When false, Send is called synchronously, before
+	// the feature read that caused the event returns, and its returned context is
+	// passed to the next plugin only - it does not reach the caller. Plugins that need
+	// to keep state for a request should implement RequestScopedPlugin instead.
 	CanSendAsync() bool
 	// Close releases any resources held by the plugin (e.g. network connections,
 	// background goroutines). Called by the Adapter when it is closed.
 	Close()
+}
+
+// RequestScopedPlugin is a Plugin that keeps state for each request, such as the features evaluated during it
+// (e.g. to add them to OpenTelemetry baggage or span attributes).
+//
+// A context.Context cannot be changed once made, and the context a plugin's Send returns never reaches the code
+// that read the feature. So a request-scoped plugin stores a mutable value (guarded by a mutex, as a request may
+// read features from several goroutines) in the request's context when the request starts, and Send finds and
+// updates it through the context it is given.
+//
+// StartRequest is called by core.ContextMiddleware and core.NewRequestContext (through
+// FeatureHubConfig.StartRequest) once per request, and returns the context with the plugin's state added (or the
+// context unchanged). A request-scoped plugin should return false from CanSendAsync, so that each feature read is
+// recorded before the read returns - otherwise a read immediately followed by an outgoing call could be missed.
+type RequestScopedPlugin interface {
+	Plugin
+	StartRequest(ctx context.Context) context.Context
 }
 
 // Provider is a factory for creating usage events and values.

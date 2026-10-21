@@ -307,6 +307,17 @@ func (c *Config) RegisterUsagePlugin(plugin usage.Plugin) interfaces.FeatureHubC
 	return c
 }
 
+// StartRequest is called once at the start of each request (by ContextMiddleware or NewRequestContext). Usage
+// plugins that keep state for each request (usage.RequestScopedPlugin) add it to the context, which is returned.
+// A closed config returns the context unchanged.
+func (c *Config) StartRequest(ctx context.Context) context.Context {
+	if c.closed.Load() {
+		return ctx
+	}
+	c.checkRepository()
+	return c.usageAdapter.StartRequest(ctx)
+}
+
 // ensures the repositories are all set correctly and returns the internal one. for use by edge clients to
 // push data into the repository. Returns nil if the config is closed.
 func (c *Config) checkRepository() interfaces.InternalRepository {

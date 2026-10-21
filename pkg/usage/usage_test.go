@@ -67,6 +67,19 @@ func TestNewUsageValue(t *testing.T) {
 	assert.Equal(t, "on", v.Value)
 }
 
+func TestNewUsageValueDereferencesPointers(t *testing.T) {
+	s := "blue"
+	n := 4.5
+	assert.Equal(t, "blue", NewUsageValue("id-1", "colour", "env", &s, models.TypeString).Value)
+	assert.Equal(t, "blue", NewUsageValue("id-1", "colour", "env", &s, models.TypeString).RawValue)
+	assert.Equal(t, "4.5", NewUsageValue("id-2", "size", "env", &n, models.TypeNumber).Value)
+
+	var nilString *string
+	v := NewUsageValue("id-3", "unset", "env", nilString, models.TypeString)
+	assert.Equal(t, "", v.Value)
+	assert.Nil(t, v.RawValue)
+}
+
 func TestNewUsageValueFromFeature(t *testing.T) {
 	fs := &models.FeatureState{ID: "fs-1", Key: "flag", EnvironmentID: "env-abc", Value: "hello", Type: models.TypeString}
 	v := NewUsageValueFromFeature(fs)

@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"sync"
 
 	"github.com/sirupsen/logrus"
 )
@@ -17,6 +18,7 @@ type StreamableRepository interface {
 
 // Adapter fans usage events from a StreamableRepository out to registered Plugins.
 type Adapter struct {
+	pluginsMu  sync.Mutex // guards plugins, which may be registered while events are being sent
 	plugins    []Plugin
 	repository StreamableRepository
 	handlerID  int
@@ -37,28 +39,63 @@ func NewAdapter(repository StreamableRepository, logger *logrus.Logger) *Adapter
 
 // RegisterPlugin adds a plugin to receive usage events.
 func (a *Adapter) RegisterPlugin(plugin Plugin) {
+	if _, scoped := plugin.(RequestScopedPlugin); scoped && plugin.CanSendAsync() && a.logger != nil {
+		a.logger.Warn("A request-scoped usage plugin sends asynchronously, so it may miss features read just before an outgoing call")
+	}
+	a.pluginsMu.Lock()
+	defer a.pluginsMu.Unlock()
 	a.plugins = append(a.plugins, plugin)
+}
+
+// currentPlugins returns a copy of the registered plugins:
+func (a *Adapter) currentPlugins() []Plugin {
+	a.pluginsMu.Lock()
+	defer a.pluginsMu.Unlock()
+	return append([]Plugin(nil), a.plugins...)
+}
+
+// StartRequest gives each RequestScopedPlugin the chance to add its state for a new request to ctx, and returns
+// the resulting context. A plugin that panics or returns nil leaves the context as it was.
+func (a *Adapter) StartRequest(ctx context.Context) context.Context {
+	for _, p := range a.currentPlugins() {
+		scoped, ok := p.(RequestScopedPlugin)
+		if !ok {
+			continue
+		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					a.logger.WithField("panic", r).Error("usage plugin panicked during StartRequest")
+				}
+			}()
+			if next := scoped.StartRequest(ctx); next != nil {
+				ctx = next
+			}
+		}()
+	}
+	return ctx
 }
 
 // Close unregisters the adapter from the repository's usage stream and closes all plugins.
 func (a *Adapter) Close() {
 	a.repository.RemoveUsageStream(a.handlerID)
-	for _, p := range a.plugins {
+	for _, p := range a.currentPlugins() {
 		p.Close()
 	}
 }
 
 func (a *Adapter) dispatch(ctx context.Context, event UsageEvent) context.Context {
-	for _, p := range a.plugins {
+	for _, p := range a.currentPlugins() {
 		if p.CanSendAsync() {
-			go func(p Plugin) {
+			// ctx is passed in, as a later synchronous plugin replaces the loop's ctx while this runs
+			go func(p Plugin, ctx context.Context) {
 				defer func() {
 					if r := recover(); r != nil {
 						a.logger.WithField("panic", r).Error("usage plugin panicked during Send")
 					}
 				}()
 				p.Send(ctx, event)
-			}(p)
+			}(p, ctx)
 		} else {
 			func() {
 				defer func() {

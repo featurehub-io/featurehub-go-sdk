@@ -346,7 +346,7 @@ For HTTP handlers, the SDK provides a middleware and a context-free interface so
 
 #### Middleware setup
 
-`core.ContextMiddleware` is standard Go HTTP middleware. It calls `fhConfig.NewContext()` for each request and stores the result in the request context under the `"featurehub"` key:
+`core.ContextMiddleware` is standard Go HTTP middleware. For each request it makes a new FeatureHub context, stores it in the request context, and lets request-scoped usage plugins add their state (see [Request-scoped usage plugins](#request-scoped-usage-plugins)):
 
 ```go
 import "github.com/featurehub-io/featurehub-go-sdk/pkg/core"
@@ -355,16 +355,24 @@ r := mux.NewRouter() // or any http.Handler
 r.Use(core.ContextMiddleware(fhConfig))
 ```
 
-Or manually with any router:
+Pass one or more initialisers to fill in the context from the request before any feature is read, for example the user key of the authenticated user:
 
 ```go
-r.Use(func(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        ctx := core.StoreInContext(r.Context(), fhConfig.NewContext())
-        next.ServeHTTP(w, r.WithContext(ctx))
-    })
-})
+r.Use(core.ContextMiddleware(fhConfig, func(r *http.Request, fhCtx interfaces.Context) {
+    fhCtx.Attributes().Userkey = userFromRequest(r)
+}))
 ```
+
+Outside HTTP (gRPC, a message from a queue), use `core.NewRequestContext`. It returns the Go context to use for the rest of the request, and the FeatureHub context so you can set its attributes:
+
+```go
+ctx, fhCtx := core.NewRequestContext(ctx, fhConfig)
+fhCtx.Attributes().Userkey = message.UserID
+```
+
+`core.FromContext(ctx)` returns the stored `interfaces.Context` (and whether there is one). The key it is stored under is a private type, so it cannot collide with other packages' context values. If the config has been closed, the middleware passes the request on without a FeatureHub context.
+
+A FeatureHub context can be read from several goroutines of the same request. Change its attributes (`Attributes()`) before sharing it, not while other goroutines are reading features.
 
 #### Using `FeatureHubContext` in handlers
 
@@ -534,6 +542,7 @@ type Plugin interface {
     DefaultPluginAttributes() usage.ContextRecord // return nil if unused
     Send(ctx context.Context, event usage.UsageEvent) context.Context
     CanSendAsync() bool
+    Close()
 }
 ```
 
@@ -557,7 +566,22 @@ fhConfig.RegisterUsagePlugin(&MyAnalyticsPlugin{})
 fhConfig.Connect()
 ```
 
-Multiple plugins can be registered. When `CanSendAsync()` returns `true`, `Send` is called in its own goroutine and the returned context is discarded. When `CanSendAsync()` returns `false`, `Send` is called synchronously and its returned context is threaded through to subsequent plugins. Panics inside `Send` are caught and logged in both cases — one failing plugin does not affect others.
+Multiple plugins can be registered. When `CanSendAsync()` returns `true`, `Send` is called in its own goroutine and the returned context is discarded. When `CanSendAsync()` returns `false`, `Send` is called synchronously, before the feature read returns, and its returned context is passed to the next plugin only — it never reaches the code that read the feature. Panics inside `Send` are caught and logged in both cases — one failing plugin does not affect others.
+
+### Request-scoped usage plugins
+
+A plugin that needs state for each request, such as the features evaluated during it, implements `usage.RequestScopedPlugin`:
+
+```go
+type RequestScopedPlugin interface {
+    usage.Plugin
+    StartRequest(ctx context.Context) context.Context
+}
+```
+
+`StartRequest` is called once per request by `core.ContextMiddleware` and `core.NewRequestContext`. It returns the context with the plugin's state added: a mutable value, guarded by a mutex because a request can read features from several goroutines. `Send` then finds that value through the context it is given and updates it. A `context.Context` cannot be changed after it is made, so this is the only way for a plugin's per-request data to reach the rest of the request.
+
+Request-scoped plugins should return `false` from `CanSendAsync()`, so that every read is recorded before it returns. The SDK logs a warning if one is registered as asynchronous. See [docs/otel.md](docs/otel.md) for an OpenTelemetry plugin built this way, which adds evaluated features to span attributes and baggage.
 
 ### Passive REST and automatic polling on usage
 
