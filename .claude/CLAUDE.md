@@ -54,7 +54,7 @@ This is a Go client SDK for FeatureHub, a feature management platform. The SDK c
 - **`pkg/streaming-client/`**: SSE-based `EdgeClient` implementation. `StreamingClient` manages the SSE connection and delegates all feature storage to a `ClientFeatureHubRepository`. Has a `Close()` method that sets `stopped=true`, preventing reconnection.
 - **`pkg/polling-client/`**: HTTP polling `EdgeClient` implementation. `FeatureHubPollingClient` supports active (timer-based) and passive (cache-expiry-based) modes. `PollingBase` handles the low-level HTTP GET mechanics (etag, cache-control, SHA-256 context header hashing, concurrent-caller coalescing). `Poll()` and `ContextChange()` dispatch asynchronously.
 - **`pkg/strategies/`**: Client-side rollout strategy matchers for boolean, number, string, semver, date, datetime, and IP address attribute types.
-- **`pkg/errors/`**: Typed errors: `ErrBadConfig`, `ErrFeatureNotFound`, `ErrInvalidType`, `ErrNotifierNotFound`, `ErrFromAPI`, `ErrFeatureIsWrongType`, `ErrInvalidNotifierCallback`, `ErrConfigClosed`, `ErrEdgeStopped` (returned by `Connect`/`Build` when the edge client has stopped for good; `Cause`/`Unwrap` gives the client's `StopReason()`). Stop reasons, matched with `errors.Is`: `ErrClientClosed`, `ErrServerRequestedStop` (236/edge.stale), `ErrKeyRejected` (400/401/403/404), `ErrServerError` (SSE error/failure event), `ErrNoEnvironments`. `NewStopReason(reason, details)` returns an `*ErrFromAPI` that unwraps to the reason; both edge clients use these, not their own copies.
+- **`pkg/errors/`**: Typed errors: `ErrBadConfig`, `ErrFeatureNotFound`, `ErrInvalidType`, `ErrNotifierNotFound`, `ErrFromAPI`, `ErrFeatureIsWrongType`, `ErrInvalidNotifierCallback`, `ErrConfigClosed`, `ErrRepositoryAlreadySet` (from `SetRepository`), `ErrEdgeStopped` (returned by `Connect`/`Build` when the edge client has stopped for good; `Cause`/`Unwrap` gives the client's `StopReason()`). Stop reasons, matched with `errors.Is`: `ErrClientClosed`, `ErrServerRequestedStop` (236/edge.stale), `ErrKeyRejected` (400/401/403/404), `ErrServerError` (SSE error/failure event), `ErrNoEnvironments`. `NewStopReason(reason, details)` returns an `*ErrFromAPI` that unwraps to the reason; both edge clients use these, not their own copies.
 - **`pkg/interceptors/`**: Built-in `FeatureValueInterceptor` implementations.
   - `LocalYamlValueInterceptor` — reads feature overrides from a YAML file specified by `FEATUREHUB_OVERRIDES` env var (defaults to `featurehub-overrides.yaml`). YAML is a list of `{key, type, value}` entries. Values are converted via `models.ConvertValue` at initialisation time.
 - **`pkg/usage/`**: Usage/analytics subsystem.
@@ -63,7 +63,7 @@ This is a Go client SDK for FeatureHub, a feature management platform. The SDK c
   - `RequestScopedPlugin` — `Plugin` + `StartRequest(ctx) context.Context`, called once per request (via `Config.StartRequest`) to store mutable, mutex-guarded per-request state in the context, which `Send` then updates. Should be synchronous (`RegisterPlugin` warns if not). Used for the OpenTelemetry design in `docs/otel.md`.
   - `NewUsageValue` dereferences `*string`/`*float64` values (as string/number reads return them); a nil pointer is a nil value.
   - `StreamHandler` — `func(context.Context, UsageEvent)` — called when a usage event is emitted by the repository.
-  - `Adapter` — subscribes to a `StreamableRepository` and fans events out to registered `Plugin`s (guarded by `pluginsMu`; dispatch works on a copy). Dispatches async plugins concurrently (panics caught and logged; each goroutine gets the ctx as it was at that point); sync plugins are called sequentially with context chaining. `dispatch` returns the final `context.Context`. `StartRequest(ctx)` runs each `RequestScopedPlugin`'s `StartRequest` in turn (panics and nil returns leave ctx unchanged).
+  - `Adapter` — subscribes to a `StreamableRepository` and fans events out to registered `Plugin`s. The plugins (and the request-scoped subset) are an immutable `pluginSet` in an `atomic.Pointer`, replaced by `RegisterPlugin` (serialised by `pluginsMu`), so dispatch and `StartRequest` read them without a lock or copy. A nil logger in `NewAdapter` means `logrus.StandardLogger()`. Dispatches async plugins concurrently (panics caught and logged; each goroutine gets the ctx as it was at that point); sync plugins are called sequentially with context chaining. `dispatch` returns the final `context.Context`. `StartRequest(ctx)` runs each `RequestScopedPlugin`'s `StartRequest` in turn (panics and nil returns leave ctx unchanged).
   - `ProviderFactory` / `Provider` — factory for constructing usage event objects; injectable via `ClientFeatureHubRepository.UsageProvider()`.
   - `ConvertFunc` — global hook for customising how feature values are stringified in usage events.
   - `ContextRecord` — `map[string]interface{}` alias for context attributes and additional event data.
@@ -109,7 +109,7 @@ core.NewFromContext(r.Context())            // retrieves ContextFeatureHub (inte
 
 `ClientFeatureHubRepository` implements both `interfaces.RepositoryContext` (public read API) and `interfaces.InternalRepository` (write API for edge providers). Edge providers only receive the `InternalRepository` side, keeping the write path internal.
 
-The `Config` manages a single `*ClientFeatureHubRepository` by default. External repository implementations can be injected via `Config.SetRepository()`. `SetRepository` also creates a new `usage.Adapter` and registers the built-in `passiveRestPollPlugin`.
+A `Config` has exactly one `*ClientFeatureHubRepository` for its lifetime. It is created on first use (`Config.repo()`, double-checked under `repoMu`, an `RWMutex` taken after `edgeMu`, never before), or supplied first with `Config.SetRepository(repo) error`, which returns `ErrRepositoryAlreadySet` if the config already has a different one, and `ErrConfigClosed` once closed. Setting the repository also creates its `usage.Adapter` and registers the built-in `passiveRestPollPlugin`. Callers use the repository/adapter returned by `repo()` (nil once closed), never the fields, as `Close` nils them under `repoMu`.
 
 ### Context Propagation
 
@@ -125,7 +125,7 @@ The context flows through to usage plugin `Send(context.Context, UsageEvent) con
 
 `Config.SetRepository` creates a `usage.Adapter` and registers a `passiveRestPollPlugin` that calls `client.Poll()` on every usage event when `EdgeType() == models.EdgePassiveRest`. This keeps the feature cache fresh in passive-REST mode without requiring the host to manually poll.
 
-Additional plugins are registered with `Config.RegisterUsagePlugin(plugin)`. Each plugin's `Send` runs in its own goroutine; panics are caught and logged.
+Additional plugins are registered with `Config.RegisterUsagePlugin(plugin)`. A plugin whose `CanSendAsync()` is true has `Send` run in its own goroutine; otherwise it runs synchronously, in registration order, before the feature read returns. Panics are caught and logged either way.
 
 ```go
 config.RegisterUsagePlugin(myAnalyticsPlugin)

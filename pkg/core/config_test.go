@@ -63,13 +63,13 @@ func TestConfig(t *testing.T) {
 	assert.Equal(t, logrus.WarnLevel, newConfig.LogLevel)
 	assert.Equal(t, time.Second, *newConfig.WaitForData)
 
+	var repo = NewClientFeatureHubRepository(newConfig.Logger)
+
+	assert.NoError(t, newConfig.SetRepository(repo))
+
 	// Try to connect (it will of course fail):
 	_, err := newConfig.Connect()
 	assert.Error(t, err)
-
-	var repo = NewClientFeatureHubRepository(newConfig.Logger)
-
-	newConfig.SetRepository(repo)
 
 	// Get a context, check that it inherited the correct attributes:
 	newContext := newConfig.NewContext().(*ClientWithContext)
@@ -188,7 +188,7 @@ func newErrorEdgeProvider(err error) EdgeProviderFunc {
 func TestPassiveRestPluginCallsPollOnUsageEvent(t *testing.T) {
 	config := NewConfig("http://localhost", "default/env/key", nil)
 	config.PassiveRest(time.Minute)
-	config.checkRepository()
+	config.repo()
 
 	mockClient := &mockEdgeClient{}
 	config.client = mockClient
@@ -202,7 +202,7 @@ func TestPassiveRestPluginCallsPollOnUsageEvent(t *testing.T) {
 func TestPassiveRestPluginDoesNotPollWhenClientIsNil(t *testing.T) {
 	config := NewConfig("http://localhost", "default/env/key", nil)
 	config.PassiveRest(time.Minute)
-	config.checkRepository()
+	config.repo()
 	// client remains nil
 
 	assert.NotPanics(t, func() {
@@ -213,7 +213,7 @@ func TestPassiveRestPluginDoesNotPollWhenClientIsNil(t *testing.T) {
 func TestPassiveRestPluginDoesNotPollForActiveRest(t *testing.T) {
 	config := NewConfig("http://localhost", "default/env/key", nil)
 	config.ActiveRest(time.Minute)
-	config.checkRepository()
+	config.repo()
 
 	mockClient := &mockEdgeClient{}
 	config.client = mockClient
@@ -228,7 +228,7 @@ func TestPassiveRestPluginDoesNotPollForActiveRest(t *testing.T) {
 func TestPassiveRestPluginDoesNotPollForStreaming(t *testing.T) {
 	config := NewConfig("http://localhost", "default/env/key", nil)
 	config.Streaming()
-	config.checkRepository()
+	config.repo()
 
 	mockClient := &mockEdgeClient{}
 	config.client = mockClient
@@ -690,4 +690,80 @@ func TestConcurrentBuildsAllSendTheirHeader(t *testing.T) {
 	config.edgeMu.Lock()
 	defer config.edgeMu.Unlock()
 	assert.Len(t, mockClient.contextChangeArgs, 20)
+}
+
+// --- One repository per config ---
+
+func TestSetRepositoryCannotReplaceTheRepository(t *testing.T) {
+	cfg := NewConfig("http://server", "env/key*", nil)
+	first := NewClientFeatureHubRepository(cfg.Logger)
+	require.NoError(t, cfg.SetRepository(first))
+	assert.NoError(t, cfg.SetRepository(first), "setting the same repository again is allowed")
+
+	var alreadySet *errors.ErrRepositoryAlreadySet
+	assert.ErrorAs(t, cfg.SetRepository(NewClientFeatureHubRepository(cfg.Logger)), &alreadySet)
+	assert.Same(t, first, cfg.repository)
+}
+
+func TestSetRepositoryAfterTheConfigMadeOneIsRefused(t *testing.T) {
+	cfg := NewConfig("http://server", "env/key*", nil)
+	ctx := cfg.NewContext().(*ClientWithContext)
+
+	var alreadySet *errors.ErrRepositoryAlreadySet
+	assert.ErrorAs(t, cfg.SetRepository(NewClientFeatureHubRepository(cfg.Logger)), &alreadySet)
+	assert.Same(t, ctx.repository, cfg.repository, "contexts already made keep using the config's repository")
+}
+
+func TestSetRepositoryOnClosedConfigIsRefused(t *testing.T) {
+	cfg := newClosedConfig(t)
+	var closed *errors.ErrConfigClosed
+	assert.ErrorAs(t, cfg.SetRepository(NewClientFeatureHubRepository(cfg.Logger)), &closed)
+	assert.Nil(t, cfg.repository)
+}
+
+func TestConcurrentFirstUseMakesOneRepository(t *testing.T) {
+	cfg := NewConfig("http://server", "env/key*", nil)
+	cfg.Logger.SetOutput(new(bytes.Buffer))
+
+	const n = 20
+	repos := make(chan interfaces.FeatureRepository, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cfg.StartRequest(context.Background())
+			repos <- cfg.NewContext().(*ClientWithContext).featureRepository
+		}()
+	}
+	wg.Wait()
+	close(repos)
+
+	for repo := range repos {
+		assert.Same(t, cfg.repository, repo)
+	}
+}
+
+func TestRequestsRacingCloseDoNotPanic(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		cfg := NewConfig("http://server", "env/key*", nil)
+		cfg.Logger.SetOutput(new(bytes.Buffer))
+		cfg.RegisterUsagePlugin(&evaluationPlugin{})
+
+		var wg sync.WaitGroup
+		for j := 0; j < 4; j++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				assert.NotPanics(t, func() {
+					ctx, fhCtx := NewRequestContext(context.Background(), cfg)
+					if fhCtx != nil {
+						fhCtx.GetBoolean(ctx, "flag") //nolint:errcheck
+					}
+				})
+			}()
+		}
+		cfg.Close()
+		wg.Wait()
+	}
 }

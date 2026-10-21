@@ -35,7 +35,8 @@ type Config struct {
 	additionalSDKKeys []string                    // extra SDK keys appended to polling requests
 	ServerAddress     string                      // FeatureHub API endpoint
 	WaitForData       *time.Duration              // if set, how long a repository will wait before aborting connection attempt
-	repository        *ClientFeatureHubRepository // A FeatureHub repository implementation
+	repoMu            sync.RWMutex                // guards repository and usageAdapter; taken after edgeMu, never before
+	repository        *ClientFeatureHubRepository // A FeatureHub repository implementation, set once
 	usageAdapter      *usage.Adapter
 	EdgeProvider      EdgeProviderFunc
 	fatalErrorHandler atomic.Pointer[interfaces.ErrorFunc] // A user-provided handler func for fatal asynchronous errors, read by edge clients' goroutines
@@ -111,15 +112,52 @@ func (c *Config) Build(context *models.Context) (interfaces.FeatureHubConfig, er
 	return c.connect(new(context.GenerateHeader()))
 }
 
-func (c *Config) SetRepository(repository *ClientFeatureHubRepository) {
-	if repository != c.repository {
-		if c.usageAdapter != nil {
-			c.usageAdapter.Close()
-		}
-		c.repository = repository
-		c.usageAdapter = usage.NewAdapter(repository, c.Logger)
-		c.usageAdapter.RegisterPlugin(&passiveRestPollPlugin{config: c})
+// SetRepository gives the config the repository to use, which must be done before anything else uses the config
+// (which creates one). A config has one repository for its lifetime: setting a different one when it already has
+// one returns ErrRepositoryAlreadySet, and setting one on a closed config returns ErrConfigClosed.
+func (c *Config) SetRepository(repository *ClientFeatureHubRepository) error {
+	if repository == nil {
+		return errors.NewErrBadConfig("repository is nil")
 	}
+	c.repoMu.Lock()
+	defer c.repoMu.Unlock()
+	if c.closed.Load() {
+		return errors.NewErrConfigClosed()
+	}
+	if c.repository != nil {
+		if c.repository == repository {
+			return nil
+		}
+		return errors.NewErrRepositoryAlreadySet()
+	}
+	c.useRepository(repository)
+	return nil
+}
+
+// useRepository sets the repository and its usage adapter. repoMu must be held for writing:
+func (c *Config) useRepository(repository *ClientFeatureHubRepository) {
+	c.repository = repository
+	c.usageAdapter = usage.NewAdapter(repository, c.Logger)
+	c.usageAdapter.RegisterPlugin(&passiveRestPollPlugin{config: c})
+}
+
+// repo returns the repository and its usage adapter, creating them on first use, or nils if the config is closed.
+// Callers use the returned values, not the fields, as Close may nil the fields at any time:
+func (c *Config) repo() (*ClientFeatureHubRepository, *usage.Adapter) {
+	c.repoMu.RLock()
+	repository, adapter := c.repository, c.usageAdapter
+	c.repoMu.RUnlock()
+	if repository != nil || c.closed.Load() {
+		return repository, adapter
+	}
+
+	c.repoMu.Lock()
+	defer c.repoMu.Unlock()
+	// Close sets closed before it takes repoMu, so a repository made here is always closed by it
+	if c.repository == nil && !c.closed.Load() {
+		c.useRepository(NewClientFeatureHubRepository(c.Logger))
+	}
+	return c.repository, c.usageAdapter
 }
 
 // edgeClient returns the current edge client, or nil:
@@ -147,6 +185,9 @@ func (c *Config) Close() {
 	}
 	c.closed.Store(true)
 	c.closeEdge()
+
+	c.repoMu.Lock()
+	defer c.repoMu.Unlock()
 	if c.repository != nil {
 		c.repository.Close()
 		c.repository = nil
@@ -196,19 +237,21 @@ func (c *Config) EdgeType() models.EdgeType {
 // IsReady - Is the repository ready, does it have its initial state?
 // delegates to the internal repository. Returns false if the config has been closed.
 func (c *Config) IsReady() bool {
-	if c.closed.Load() {
+	repository, _ := c.repo()
+	if repository == nil {
 		return false
 	}
-	return c.checkRepository().IsReady()
+	return repository.IsReady()
 }
 
 // ReadinessListener - Configure the SDK with a function to call when we're ready (up and running with some data)
 // delegates to the internal repository. No-op if the config has been closed.
 func (c *Config) ReadinessListener(context context.Context, callbackFunc func(context context.Context)) {
-	if c.closed.Load() {
+	repository, _ := c.repo()
+	if repository == nil {
 		return
 	}
-	c.checkRepository().ReadinessListener(context, callbackFunc)
+	repository.ReadinessListener(context, callbackFunc)
 }
 
 func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
@@ -255,7 +298,9 @@ func (c *Config) edgeClientFor(header *string) (interfaces.EdgeClient, error) {
 		return nil, nil
 	}
 
-	client, err := c.EdgeProvider(c, c.checkRepository())
+	// closed was checked under edgeMu, which Close needs, so the repository is never nil here
+	repository, _ := c.repo()
+	client, err := c.EdgeProvider(c, repository)
 	if err != nil {
 		return nil, err
 	}
@@ -283,26 +328,25 @@ func (c *Config) Connect() (interfaces.FeatureHubConfig, error) {
 // NewContext returns a ClientWithContext, with default context values.
 // Returns nil if the config has been closed.
 func (c *Config) NewContext() interfaces.Context {
-	if c.closed.Load() {
+	repository, _ := c.repo()
+	if repository == nil {
 		return nil
 	}
-	c.checkRepository()
 	return &ClientWithContext{
 		Context: &models.Context{
 			Custom: make(map[string]interface{}),
 		},
-		repository:        c.repository,
-		featureRepository: c.repository,
+		repository:        repository,
+		featureRepository: repository,
 	}
 }
 
 func (c *Config) RegisterUsagePlugin(plugin usage.Plugin) interfaces.FeatureHubConfig {
-	if c.closed.Load() {
+	_, adapter := c.repo()
+	if adapter == nil {
 		return nil
 	}
-	c.checkRepository()
-
-	c.usageAdapter.RegisterPlugin(plugin)
+	adapter.RegisterPlugin(plugin)
 
 	return c
 }
@@ -311,24 +355,11 @@ func (c *Config) RegisterUsagePlugin(plugin usage.Plugin) interfaces.FeatureHubC
 // plugins that keep state for each request (usage.RequestScopedPlugin) add it to the context, which is returned.
 // A closed config returns the context unchanged.
 func (c *Config) StartRequest(ctx context.Context) context.Context {
-	if c.closed.Load() {
+	_, adapter := c.repo()
+	if adapter == nil {
 		return ctx
 	}
-	c.checkRepository()
-	return c.usageAdapter.StartRequest(ctx)
-}
-
-// ensures the repositories are all set correctly and returns the internal one. for use by edge clients to
-// push data into the repository. Returns nil if the config is closed.
-func (c *Config) checkRepository() interfaces.InternalRepository {
-	if c.closed.Load() {
-		return nil
-	}
-	if c.repository == nil {
-		c.SetRepository(NewClientFeatureHubRepository(c.Logger))
-	}
-
-	return c.repository
+	return adapter.StartRequest(ctx)
 }
 
 // Validate can be called to check various config options:
@@ -360,14 +391,14 @@ func (c *Config) Validate() error {
 // WithContext creates a new context with the passed models.Context.
 // Returns nil if the config has been closed.
 func (c *Config) WithContext(context *models.Context) interfaces.Context {
-	if c.closed.Load() {
+	repository, _ := c.repo()
+	if repository == nil {
 		return nil
 	}
-	c.checkRepository()
 	return &ClientWithContext{
 		Context:           context,
-		repository:        c.repository,
-		featureRepository: c.repository,
+		repository:        repository,
+		featureRepository: repository,
 	}
 }
 
@@ -458,11 +489,11 @@ func (c *Config) WithWaitForData(value time.Duration) interfaces.FeatureHubConfi
 }
 
 func (c *Config) AddValueInterceptor(valueInterceptor interfaces.FeatureValueInterceptor) {
-	if c.closed.Load() {
+	repository, _ := c.repo()
+	if repository == nil {
 		return
 	}
-	c.checkRepository()
-	c.repository.AddValueInterceptor(valueInterceptor)
+	repository.AddValueInterceptor(valueInterceptor)
 }
 
 // EnvironmentID extracts the environment ID from the SDKKey.

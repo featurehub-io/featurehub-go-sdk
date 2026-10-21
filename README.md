@@ -728,7 +728,11 @@ repo := core.NewClientFeatureHubRepository(logger)
 // (extend ClientFeatureHubRepository or use SetRepository after creation)
 
 fhConfig := core.NewConfig(serverAddress, apiKey, edgeProvider)
-fhConfig.SetRepository(repo)
+// a config has one repository for its lifetime, so set it before anything else uses the config;
+// once it has one (including one it made itself), SetRepository returns ErrRepositoryAlreadySet
+if err := fhConfig.SetRepository(repo); err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Extending the built-in event structs

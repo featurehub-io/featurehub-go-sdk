@@ -77,12 +77,39 @@ func (p *ctxPlugin) Send(ctx context.Context, event UsageEvent) context.Context 
 func TestAsyncPluginBeforeSyncPluginDoesNotRace(t *testing.T) {
 	repo := newMockRepo()
 	adapter := NewAdapter(repo, newTestLogger())
-	async := newMockPlugin()
-	adapter.RegisterPlugin(async)
+	seen := make(chan interface{}, 20)
+	adapter.RegisterPlugin(&ctxReadingPlugin{seen: seen})
 	adapter.RegisterPlugin(&ctxPlugin{})
 
 	for i := 0; i < 20; i++ {
 		repo.emit(NewUsageEventWithFeature(&FeatureHubUsageValue{ID: "1", Key: "f", Value: "on"}, nil, ""))
 	}
-	async.wait(t, 20, time.Second)
+	for i := 0; i < 20; i++ {
+		select {
+		case value := <-seen:
+			assert.Nil(t, value, "the async plugin sees the context as it was before the sync plugin replaced it")
+		case <-time.After(time.Second):
+			t.Fatal("the async plugin was not called")
+		}
+	}
+}
+
+// ctxReadingPlugin is an asynchronous plugin that reads the context it is sent, so -race catches it being shared
+// with the dispatch loop:
+type ctxReadingPlugin struct {
+	mockPlugin
+	seen chan interface{}
+}
+
+func (p *ctxReadingPlugin) CanSendAsync() bool { return true }
+func (p *ctxReadingPlugin) Send(ctx context.Context, event UsageEvent) context.Context {
+	p.seen <- ctx.Value(requestKey{})
+	return ctx
+}
+
+func TestNilLoggerDoesNotTurnPluginPanicsIntoCrashes(t *testing.T) {
+	adapter := NewAdapter(newMockRepo(), nil)
+	adapter.RegisterPlugin(&scopedPlugin{start: func(ctx context.Context) context.Context { panic("boom") }})
+
+	assert.NotPanics(t, func() { adapter.StartRequest(context.Background()) })
 }

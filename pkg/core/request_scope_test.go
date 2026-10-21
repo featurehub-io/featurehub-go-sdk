@@ -47,7 +47,8 @@ func (evaluationPlugin) Send(ctx context.Context, event usage.UsageEvent) contex
 func newConfigWithFeatures(t *testing.T) *Config {
 	t.Helper()
 	config := NewConfig("http://localhost", "default/env/key", nil)
-	config.checkRepository().ProcessFeatures([]*models.FeatureState{
+	repository, _ := config.repo()
+	repository.ProcessFeatures([]*models.FeatureState{
 		ffs(`{"key":"flag","type":"BOOLEAN","value":true,"id":"id-flag","version":1}`),
 		ffs(`{"key":"colour","type":"STRING","value":"blue","id":"id-colour","version":1}`),
 	})
