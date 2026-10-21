@@ -161,17 +161,14 @@ func (c *FeatureHubPollingClient) StopReason() error {
 		return nil
 	}
 	if c.stopReason == nil {
-		return errClientClosed
+		return fherrors.ErrClientClosed
 	}
 	return c.stopReason
 }
 
-// errClientClosed is the stop reason for a client closed with Close:
-var errClientClosed = errors.New("the client was closed")
-
 // Close stops the polling client and any pending timers.
 func (c *FeatureHubPollingClient) Close() {
-	c.stopFor(errClientClosed)
+	c.stopFor(fherrors.ErrClientClosed)
 }
 
 // stopFor stops the client for good, and reports whether this was the first stop. The reason given by the first
@@ -226,7 +223,7 @@ func (c *FeatureHubPollingClient) pollFunc(resolve func(), reject func(error)) {
 				message = "The API key provided does not exist, stopping polling."
 			}
 			// a concurrent poll (e.g. from ContextChange) can get the same response; only the first stop reports it
-			reason := fherrors.NewErrFromAPI(fmt.Sprintf("the server rejected the API key or server address (status %d: %s)", httpErr.StatusCode, httpErr.Message))
+			reason := fherrors.NewStopReason(fherrors.ErrKeyRejected, fmt.Sprintf("status %d: %s", httpErr.StatusCode, httpErr.Message))
 			if c.stopFor(reason) {
 				c.config.ReportFatalError(reason, message, map[string]interface{}{"status": httpErr.StatusCode})
 			}
@@ -250,7 +247,7 @@ func (c *FeatureHubPollingClient) pollFunc(resolve func(), reject func(error)) {
 	// 236: the server has told us to stop (the same as SSE edge.stale). Stop for good - Connect, Poll and
 	// ContextChange will no longer poll:
 	if c.polling.Stopped() {
-		if c.stopFor(fherrors.NewErrFromAPI("the server requested a stop (status 236)")) {
+		if c.stopFor(fherrors.NewStopReason(fherrors.ErrServerRequestedStop, "status 236")) {
 			c.logger.Warn("The FeatureHub server has requested that we stop polling (236)! No further updates will be received - existing data will continue to be served")
 		}
 
@@ -319,7 +316,7 @@ func (c *FeatureHubPollingClient) scheduleNextPoll(
 // It flattens features from all environments and pushes them to the repository.
 func (c *FeatureHubPollingClient) response(environments []*models.FeatureEnvironmentCollection) {
 	if len(environments) == 0 {
-		reason := fherrors.NewErrFromAPI("no environments returned")
+		reason := fherrors.NewStopReason(fherrors.ErrNoEnvironments, "")
 		if c.stopFor(reason) {
 			c.config.ReportFatalError(reason, "No environments returned, stopping polling.", nil)
 		}

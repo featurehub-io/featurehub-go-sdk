@@ -61,7 +61,12 @@ func (t headerTimeoutTransport) RoundTrip(req *http.Request) (*http.Response, er
 			resp.Body.Close()
 		}
 		cancel()
-		return nil, fmt.Errorf("no response from %s within %s", req.URL.Host, t.timeout)
+		timeoutErr := fmt.Errorf("no response from %s within %s: %w", req.URL.Host, t.timeout, context.DeadlineExceeded)
+		if err != nil && !goerrors.Is(err, context.Canceled) {
+			// keep the transport's own error (e.g. a DNS failure) if it is not just the cancellation
+			return nil, fmt.Errorf("%w: %w", timeoutErr, err)
+		}
+		return nil, timeoutErr
 	}
 	if err != nil {
 		cancel()
@@ -88,9 +93,6 @@ func (b *cancelOnClose) Close() error {
 // sseHTTPClient is used by all streaming clients. It has no overall timeout (the stream is long lived), only a
 // limit on waiting for the response headers:
 var sseHTTPClient = &http.Client{Transport: headerTimeoutTransport{timeout: sseResponseHeaderTimeout}}
-
-// errClientClosed is the stop reason for a client closed with Close:
-var errClientClosed = goerrors.New("the client was closed")
 
 // eventsourceLogger sends the eventsource library's connection messages (e.g. reconnects) to the debug log:
 type eventsourceLogger struct {
@@ -216,19 +218,20 @@ func (c *StreamingClient) Connect() {
 // client also closes itself if the server tells it to stop (edge.stale, or a 236 status), rejects the key or
 // server address, or sends an error or failure event.
 func (c *StreamingClient) Close() {
-	c.stop(errClientClosed)
+	c.stop(errors.ErrClientClosed)
 }
 
-// stop stops the client for good. The reason given by the first stop is kept, for StopReason:
-func (c *StreamingClient) stop(reason error) {
+// stop stops the client for good, and reports whether this was the first stop. The reason given by the first
+// stop is kept, for StopReason. It is stored before stopped is set, so a client seen as stopped has its reason:
+func (c *StreamingClient) stop(reason error) bool {
 	c.isRunning.Store(false)
-	if c.stopped.CompareAndSwap(false, true) {
-		c.stopReason.Store(&reason)
-	}
+	first := c.stopReason.CompareAndSwap(nil, &reason)
+	c.stopped.Store(true)
 	if c.cancelRequest != nil {
 		// the eventsource library closes the stream and releases the connection when the request is cancelled
 		c.cancelRequest()
 	}
+	return first
 }
 
 // Stopped reports whether the client has stopped for good: it was closed, the server told it to stop, the
@@ -244,7 +247,7 @@ func (c *StreamingClient) StopReason() error {
 		return *reason
 	}
 	if c.stopped.Load() {
-		return errClientClosed
+		return errors.ErrClientClosed
 	}
 	return nil
 }

@@ -53,13 +53,15 @@ func stopStatus(err error) (eventsource.SubscriptionError, bool) {
 // error handler:
 func (c *StreamingClient) stopForStatus(subscriptionErr eventsource.SubscriptionError) {
 	if subscriptionErr.Code == statusStale {
-		c.stop(errors.NewErrFromAPI("the server requested a stop (status 236)"))
+		c.stop(errors.NewStopReason(errors.ErrServerRequestedStop, "status 236"))
 		c.logger.Warn("The FeatureHub server has requested that we stop (236)! No further updates will be received - existing data will continue to be served")
 		return
 	}
 
-	reason := errors.NewErrFromAPI(fmt.Sprintf("the server rejected the SDK key or server address (status %d: %s)", subscriptionErr.Code, subscriptionErr.Message))
-	c.stop(reason)
+	reason := errors.NewStopReason(errors.ErrKeyRejected, fmt.Sprintf("status %d: %s", subscriptionErr.Code, subscriptionErr.Message))
+	if !c.stop(reason) {
+		return // already stopped (e.g. closed while this error was being handled), so this did not stop it
+	}
 	details := map[string]interface{}{"status": subscriptionErr.Code, "message": subscriptionErr.Message}
 	c.reportFatalError(reason, "The FeatureHub server rejected the SDK key or server address, stopping", details)
 }
@@ -148,8 +150,10 @@ func (c *StreamingClient) handleSSEError(event eventsource.Event) {
 // stopForEvent stops the client for good after an error or failure event from the server - it disconnects and
 // never reconnects - and passes the event to the fatal error handler:
 func (c *StreamingClient) stopForEvent(event eventsource.Event, message string) {
-	reason := errors.NewErrFromAPI(fmt.Sprintf("%s event from the server: %s", event.Event(), event.Data()))
-	c.stop(reason)
+	reason := errors.NewStopReason(errors.ErrServerError, fmt.Sprintf("%s event: %s", event.Event(), event.Data()))
+	if !c.stop(reason) {
+		return // already stopped (e.g. closed, or by an earlier event), so this did not stop it
+	}
 
 	details := map[string]interface{}{
 		"event":   event.Event(),
@@ -171,6 +175,6 @@ func (c *StreamingClient) handleFHConfigEvent(event eventsource.Event) {
 
 		// Close the client for good - it will not reconnect, and cannot be connected again:
 		c.logger.Warn("The FeatureHub server has requested that we close our connection (edge.stale)! No further updates will be received - existing data will continue to be served")
-		c.stop(errors.NewErrFromAPI("the server requested a stop (edge.stale)"))
+		c.stop(errors.NewStopReason(errors.ErrServerRequestedStop, "edge.stale"))
 	}
 }

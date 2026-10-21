@@ -43,6 +43,8 @@ type Config struct {
 	sseReadTimeout    time.Duration // how long a streaming connection may go without receiving data before reconnecting
 	sseMaxRetryDelay  time.Duration // the longest delay between streaming reconnect attempts
 	client            interfaces.EdgeClient
+	edgeGeneration    int  // incremented whenever the edge client is discarded, so connect can tell it happened
+	connecting        bool // set while connect runs, so the fatal error handler cannot start another connect
 	closed            bool
 }
 
@@ -121,6 +123,7 @@ func (c *Config) SetRepository(repository *ClientFeatureHubRepository) {
 }
 
 func (c *Config) closeEdge() {
+	c.edgeGeneration++
 	if c.client != nil {
 		c.client.Close()
 		c.client = nil
@@ -194,6 +197,14 @@ func (c *Config) ReadinessListener(context context.Context, callbackFunc func(co
 }
 
 func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
+	// The fatal error handler can run during connect (e.g. a rejected SDK key on the first request), and user
+	// code there must not start another connect - with a rejected key that would call the handler again, forever:
+	if c.connecting {
+		return c, errors.NewErrBadConfig("Connect or Build was called while already connecting (e.g. from the fatal error handler)")
+	}
+	c.connecting = true
+	defer func() { c.connecting = false }()
+
 	// An existing edge client is already connected, so it is not connected again. One that has stopped for good
 	// (e.g. edge.stale) stays stopped and is reported as an error. Streaming(), ActiveRest() and PassiveRest()
 	// discard the client, so the next connect makes a new one.
@@ -207,28 +218,38 @@ func (c *Config) connect(header *string) (interfaces.FeatureHubConfig, error) {
 		return c, nil
 	}
 
-	provider, err := c.EdgeProvider(c, c.checkRepository())
+	generation := c.edgeGeneration
+	client, err := c.EdgeProvider(c, c.checkRepository())
 
 	if err != nil {
 		return c, err
 	}
 
-	c.client = provider
+	// The fatal error handler may have closed the config, or discarded the edge client (e.g. ActiveRest()),
+	// while the client was being made. It is not used:
+	if generation != c.edgeGeneration {
+		client.Close()
+		return c, errors.NewErrEdgeStopped(client.StopReason())
+	}
+
+	c.client = client
+
+	// The checks below use client rather than c.client, as the fatal error handler may discard c.client.
 
 	// the client may be stopped before it connects (e.g. the server rejected the SDK key on the first request)
-	if c.client.Stopped() {
-		return c, errors.NewErrEdgeStopped(c.client.StopReason())
+	if client.Stopped() {
+		return c, errors.NewErrEdgeStopped(client.StopReason())
 	}
 
 	if header != nil {
-		c.client.ContextChange(*header)
+		client.ContextChange(*header)
 	}
 
-	c.client.Connect()
+	client.Connect()
 
 	// or while connecting (e.g. a rejected first poll, or edge.stale)
-	if c.client.Stopped() {
-		return c, errors.NewErrEdgeStopped(c.client.StopReason())
+	if client.Stopped() {
+		return c, errors.NewErrEdgeStopped(client.StopReason())
 	}
 
 	return c, nil

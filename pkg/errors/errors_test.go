@@ -146,3 +146,19 @@ func TestErrInvalidNotifierCallbackErrorsAs(t *testing.T) {
 	var target *ErrInvalidNotifierCallback
 	assert.True(t, stderrors.As(err, &target))
 }
+
+// --- Stop reasons ---
+
+func TestNewStopReasonMatchesItsReason(t *testing.T) {
+	err := NewStopReason(ErrKeyRejected, "status 401: Unauthorized")
+	assert.EqualError(t, err, "API error: the server rejected the SDK key or server address (status 401: Unauthorized)")
+	assert.True(t, stderrors.Is(err, ErrKeyRejected))
+	assert.False(t, stderrors.Is(err, ErrServerRequestedStop))
+
+	stopped := NewErrEdgeStopped(err)
+	assert.True(t, stderrors.Is(stopped, ErrKeyRejected), "matches through ErrEdgeStopped")
+}
+
+func TestNewStopReasonWithoutDetails(t *testing.T) {
+	assert.EqualError(t, NewStopReason(ErrNoEnvironments, ""), "API error: the server returned no environments")
+}

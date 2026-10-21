@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/core"
+	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/launchdarkly/eventsource"
@@ -573,5 +574,5 @@ func TestStopReasonExplainsWhyTheClientStopped(t *testing.T) {
 func TestStopReasonForClose(t *testing.T) {
 	client, _ := newTestStreamingClient(t)
 	client.Close()
-	assert.ErrorIs(t, client.StopReason(), errClientClosed)
+	assert.ErrorIs(t, client.StopReason(), errors.ErrClientClosed)
 }

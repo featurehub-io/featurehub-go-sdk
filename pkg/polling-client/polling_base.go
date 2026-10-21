@@ -275,14 +275,16 @@ func (b *PollingBase) doPoll() error {
 		return err
 	}
 
+	if b.Postdecode(environments) {
+		return nil
+	}
+
 	// a 236 with no features is just the stop; an empty list on a normal response means there is nothing to poll
 	if stale && len(environments) == 0 {
 		return nil
 	}
 
-	if !b.Postdecode(environments) {
-		b.callback(environments)
-	}
+	b.callback(environments)
 
 	return nil
 }

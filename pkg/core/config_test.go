@@ -145,18 +145,28 @@ type mockEdgeClient struct {
 	connectCalls      int
 	contextChangeArgs []string
 	stopped           bool
+	closed            bool
+	onConnect         func() // called from Connect, e.g. to run the fatal error handler as a rejected poll would
 }
 
-func (m *mockEdgeClient) Connect()    { m.connectCalls++ }
+func (m *mockEdgeClient) Connect() {
+	m.connectCalls++
+	if m.onConnect != nil {
+		m.onConnect()
+	}
+}
 func (m *mockEdgeClient) Poll() error { m.pollCalls.Add(1); return nil }
 func (m *mockEdgeClient) ContextChange(h string) {
 	m.contextChangeArgs = append(m.contextChangeArgs, h)
 }
-func (m *mockEdgeClient) Close()        {}
-func (m *mockEdgeClient) Stopped() bool { return m.stopped }
+func (m *mockEdgeClient) Close()        { m.closed = true }
+func (m *mockEdgeClient) Stopped() bool { return m.stopped || m.closed }
 func (m *mockEdgeClient) StopReason() error {
 	if m.stopped {
 		return errors.NewErrFromAPI("stopped by the test")
+	}
+	if m.closed {
+		return errors.ErrClientClosed
 	}
 	return nil
 }
@@ -489,11 +499,12 @@ func TestOpenConfigIsClosedFalse(t *testing.T) {
 }
 
 func TestConnectReusesExistingEdgeClient(t *testing.T) {
-	mockClient := &mockEdgeClient{}
+	var clients []*mockEdgeClient
 	providerCalls := 0
 	config := NewConfig("http://localhost", "default/env/key", func(_ *Config, _ interfaces.InternalRepository) (interfaces.EdgeClient, error) {
 		providerCalls++
-		return mockClient, nil
+		clients = append(clients, &mockEdgeClient{})
+		return clients[len(clients)-1], nil
 	})
 
 	_, err := config.Connect()
@@ -503,13 +514,14 @@ func TestConnectReusesExistingEdgeClient(t *testing.T) {
 
 	// the existing client is kept, and not connected a second time
 	assert.Equal(t, 1, providerCalls)
-	assert.Equal(t, 1, mockClient.connectCalls)
+	assert.Equal(t, 1, clients[0].connectCalls)
 
 	// changing the edge type discards the client, so the next Connect makes a new one
 	config.Streaming()
 	_, err = config.Connect()
 	require.NoError(t, err)
 	assert.Equal(t, 2, providerCalls)
+	assert.True(t, clients[0].closed, "the discarded client is closed")
 }
 
 func TestConnectWithStoppedEdgeClientReturnsError(t *testing.T) {
@@ -584,4 +596,54 @@ func TestReportFatalErrorCallsHandlerOrLogs(t *testing.T) {
 	config.ReportFatalError(errors.NewErrFromAPI("bad"), "stopping again", nil)
 	assert.Equal(t, []string{"stopping again"}, messages)
 	assert.Empty(t, logs.String(), "the handler decides what to log")
+}
+
+func TestFatalHandlerClosingConfigDuringConnectDoesNotPanic(t *testing.T) {
+	// e.g. active REST with a rejected key: the first poll calls the handler from inside Connect
+	mockClient := &mockEdgeClient{}
+	config := NewConfig("http://localhost", "default/env/key", newMockEdgeProvider(mockClient))
+	mockClient.onConnect = func() { config.Close() }
+
+	_, err := config.Connect()
+
+	var stoppedErr *errors.ErrEdgeStopped
+	assert.ErrorAs(t, err, &stoppedErr)
+	assert.ErrorIs(t, err, errors.ErrClientClosed)
+}
+
+func TestFatalHandlerCannotStartAnotherConnect(t *testing.T) {
+	// e.g. streaming with a rejected key: the handler runs while the edge provider makes the client
+	var config *Config
+	providerCalls := 0
+	var innerErr error
+	config = NewConfig("http://localhost", "default/env/key", func(_ *Config, _ interfaces.InternalRepository) (interfaces.EdgeClient, error) {
+		providerCalls++
+		_, innerErr = config.Connect() // the handler tries to connect again
+		return &mockEdgeClient{stopped: true}, nil
+	})
+
+	_, err := config.Connect()
+
+	var stoppedErr *errors.ErrEdgeStopped
+	assert.ErrorAs(t, err, &stoppedErr)
+	var badConfig *errors.ErrBadConfig
+	assert.ErrorAs(t, innerErr, &badConfig, "a connect from inside a connect is refused")
+	assert.Equal(t, 1, providerCalls, "no second client is made")
+}
+
+func TestFatalHandlerDiscardingClientWhileItIsMadeIsHonoured(t *testing.T) {
+	var config *Config
+	made := &mockEdgeClient{}
+	config = NewConfig("http://localhost", "default/env/key", func(_ *Config, _ interfaces.InternalRepository) (interfaces.EdgeClient, error) {
+		config.Close() // the handler closes the config while the client is being made
+		return made, nil
+	})
+
+	_, err := config.Connect()
+
+	var stoppedErr *errors.ErrEdgeStopped
+	assert.ErrorAs(t, err, &stoppedErr)
+	assert.True(t, made.closed, "the client made for a closed config is closed")
+	assert.Nil(t, config.client, "and not kept")
+	assert.Zero(t, made.connectCalls)
 }

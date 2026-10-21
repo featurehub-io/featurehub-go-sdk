@@ -110,11 +110,30 @@ The client stops for good, and does not reconnect, when:
 
 When the client stops because of an error (anything other than `edge.stale` or `236`), the error is passed to the
 fatal error handler set with `WithFatalErrorHandler`, or logged if there is none. The SDK never stops the host
-process - what to do is up to the handler. The handler can be called while `Connect()` is still running (for
-example when the first request is rejected), so it should not call back into the config.
+process - what to do is up to the handler. The handler is called once per client, and can be called while
+`Connect()` is still running (for example when the first request is rejected). It may close the config, but a
+`Connect()` or `Build()` started from inside it is refused with an `*errors.ErrBadConfig`.
 
 Once the client has stopped, `Connect()` and `Build()` return an `*errors.ErrEdgeStopped` error. Its `Cause`
-(also available with `errors.Unwrap`) says why, for example a rejected key with its HTTP status. Calling
+(also available with `errors.Unwrap`) says why, for example a rejected key with its HTTP status. Use `errors.Is`
+with the stop reasons in `pkg/errors` to tell them apart:
+
+| Reason | Meaning |
+|---|---|
+| `errors.ErrClientClosed` | the client or config was closed |
+| `errors.ErrServerRequestedStop` | `edge.stale` or a `236` status |
+| `errors.ErrKeyRejected` | a `400`, `401`, `403` or `404` status |
+| `errors.ErrServerError` | a streaming `error` or `failure` event |
+| `errors.ErrNoEnvironments` | polling returned no environments for the SDK keys |
+
+```go
+	_, err := fhConfig.Connect()
+	if stderrors.Is(err, fherrors.ErrKeyRejected) {
+		// the SDK key or server address is wrong
+	}
+```
+
+Calling
 `Connect()` again on a client that is running does nothing. A streaming connection attempt waits up to 30 seconds
 for the server to answer before failing.
 

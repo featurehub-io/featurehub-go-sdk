@@ -442,7 +442,11 @@ func TestPollOn236WithNoEnvironmentsDoesNotReportNoEnvironments(t *testing.T) {
 	pb := newPollingBase(srv.URL+"/features?apiKey=test-key", time.Minute, 5*time.Second,
 		func(envs []*models.FeatureEnvironmentCollection) { called = true }, newTestLogger())
 
+	decoded := false
+	pb.Postdecode = func(_ []*models.FeatureEnvironmentCollection) bool { decoded = true; return false }
+
 	assert.NoError(t, pb.Poll())
 	assert.True(t, pb.Stopped())
 	assert.False(t, called, "an empty list with a 236 is just the stop, not 'no environments'")
+	assert.True(t, decoded, "the Postdecode hook still sees the decoded response")
 }

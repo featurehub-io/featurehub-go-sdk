@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/core"
+	fherrors "github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -245,6 +246,7 @@ func TestFatal404StopsClient(t *testing.T) {
 	c.mu.Unlock()
 	assert.False(t, startable)
 	assert.True(t, mock.Stopped())
+	assert.ErrorIs(t, c.StopReason(), fherrors.ErrKeyRejected)
 }
 
 func TestFatal400StopsClient(t *testing.T) {
@@ -358,6 +360,7 @@ func TestResponseEmptyEnvironmentsStopsClient(t *testing.T) {
 	c.mu.Unlock()
 	assert.False(t, startable)
 	assert.True(t, mock.Stopped())
+	assert.ErrorIs(t, c.StopReason(), fherrors.ErrNoEnvironments)
 }
 
 // --- Passive: cache expiry is updated after poll ---
@@ -489,6 +492,7 @@ func TestRejectedFirstPollDuringConnectCallsFatalErrorHandler(t *testing.T) {
 	assert.Equal(t, 1, calls)
 	assert.True(t, c.Stopped())
 	assert.Contains(t, c.StopReason().Error(), "404")
+	assert.ErrorIs(t, c.StopReason(), fherrors.ErrKeyRejected)
 }
 
 func TestRejectedResponseSeenByTwoPollsIsReportedOnce(t *testing.T) {
@@ -510,7 +514,7 @@ func TestStopReasonForClose(t *testing.T) {
 	assert.Nil(t, c.StopReason())
 
 	c.Close()
-	assert.ErrorIs(t, c.StopReason(), errClientClosed)
+	assert.ErrorIs(t, c.StopReason(), fherrors.ErrClientClosed)
 }
 
 func TestPollingConnectStopsWaitingForDataWhenClientStops(t *testing.T) {
