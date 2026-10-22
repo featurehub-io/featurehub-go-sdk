@@ -17,7 +17,9 @@ func newReviewTestClient(waitFor time.Duration) (*StreamingClient, *core.ClientF
 
 	config := &core.Config{Logger: logger, WaitForData: &waitFor}
 	repo := core.NewClientFeatureHubRepository(logger)
-	config.SetRepository(repo)
+	if err := config.SetRepository(repo); err != nil {
+		panic(err)
+	}
 
 	stream := newFakeStream(100)
 	return &StreamingClient{

@@ -11,6 +11,7 @@ import (
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStreamingClientFeatures(t *testing.T) {
@@ -29,7 +30,7 @@ func TestStreamingClientFeatures(t *testing.T) {
 	}
 
 	repo := core.NewClientFeatureHubRepository(logger)
-	config.SetRepository(repo)
+	require.NoError(t, config.SetRepository(repo))
 
 	// Use the config to make a new StreamingClient with a mock stream
 	stream := newFakeStream(100)

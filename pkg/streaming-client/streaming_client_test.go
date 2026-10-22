@@ -380,7 +380,7 @@ func TestFirstConnectionRejectedReturnsStoppedClient(t *testing.T) {
 			config.Logger.SetOutput(new(bytes.Buffer))
 			config.WithFatalErrorHandler(recordFatalErrors(called))
 			repo := core.NewClientFeatureHubRepository(config.Logger)
-			config.SetRepository(repo)
+			require.NoError(t, config.SetRepository(repo))
 
 			client, err := NewStreamingClient(config, repo)
 			require.NoError(t, err, "a client that must never connect is returned, stopped, so it stays stopped")
@@ -414,7 +414,7 @@ func TestFirstConnectionServerErrorReturnsError(t *testing.T) {
 	config := core.NewConfig(ts.URL, "default/env/key", nil)
 	config.Logger.SetOutput(new(bytes.Buffer))
 	repo := core.NewClientFeatureHubRepository(config.Logger)
-	config.SetRepository(repo)
+	require.NoError(t, config.SetRepository(repo))
 
 	// a temporary error can be retried by connecting again, so no client is kept
 	client, err := NewStreamingClient(config, repo)

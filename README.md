@@ -731,7 +731,8 @@ fhConfig := core.NewConfig(serverAddress, apiKey, edgeProvider)
 // a config has one repository for its lifetime, so set it before anything else uses the config;
 // once it has one (including one it made itself), SetRepository returns ErrRepositoryAlreadySet
 if err := fhConfig.SetRepository(repo); err != nil {
-    log.Fatal(err)
+    // the config keeps the repository it already has
+    logger.WithError(err).Error("custom repository not used")
 }
 ```
 

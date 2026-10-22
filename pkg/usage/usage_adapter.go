@@ -26,8 +26,9 @@ type pluginSet struct {
 
 // Adapter fans usage events from a StreamableRepository out to registered Plugins.
 type Adapter struct {
-	pluginsMu  sync.Mutex                // makes RegisterPlugin calls take turns
+	pluginsMu  sync.Mutex                // makes RegisterPlugin and Close take turns, and guards closed
 	plugins    atomic.Pointer[pluginSet] // replaced (never changed) by RegisterPlugin, so every read is lock-free
+	closed     bool
 	repository StreamableRepository
 	handlerID  int
 	logger     *logrus.Logger
@@ -43,39 +44,44 @@ func NewAdapter(repository StreamableRepository, logger *logrus.Logger) *Adapter
 		repository: repository,
 		logger:     logger,
 	}
+	a.plugins.Store(&pluginSet{})
 	a.handlerID = repository.RegisterUsageStream(func(ctx context.Context, event UsageEvent) {
 		a.dispatch(ctx, event)
 	})
 	return a
 }
 
-// RegisterPlugin adds a plugin to receive usage events.
-func (a *Adapter) RegisterPlugin(plugin Plugin) {
+// RegisterPlugin adds a plugin to receive usage events, and reports whether it was added. A closed adapter closes
+// the plugin instead, so it is never left open.
+func (a *Adapter) RegisterPlugin(plugin Plugin) bool {
 	scoped, isScoped := plugin.(RequestScopedPlugin)
 	if isScoped && plugin.CanSendAsync() {
 		a.logger.Warn("A request-scoped usage plugin sends asynchronously, so it may miss features read just before an outgoing call")
 	}
 	a.pluginsMu.Lock()
+	if a.closed {
+		a.pluginsMu.Unlock()
+		plugin.Close()
+		return false
+	}
 	defer a.pluginsMu.Unlock()
 
-	// copy, as readers may be using the current set
+	// the published slices are never changed, so they are copied when added to, and otherwise shared
 	current := a.currentPlugins()
 	next := &pluginSet{
 		all:    append(append(make([]Plugin, 0, len(current.all)+1), current.all...), plugin),
-		scoped: append([]RequestScopedPlugin(nil), current.scoped...),
+		scoped: current.scoped,
 	}
 	if isScoped {
-		next.scoped = append(next.scoped, scoped)
+		next.scoped = append(append(make([]RequestScopedPlugin, 0, len(current.scoped)+1), current.scoped...), scoped)
 	}
 	a.plugins.Store(next)
+	return true
 }
 
 // currentPlugins returns the registered plugins, which must not be changed:
 func (a *Adapter) currentPlugins() *pluginSet {
-	if set := a.plugins.Load(); set != nil {
-		return set
-	}
-	return &pluginSet{}
+	return a.plugins.Load()
 }
 
 // StartRequest gives each RequestScopedPlugin the chance to add its state for a new request to ctx, and returns
@@ -96,8 +102,17 @@ func (a *Adapter) StartRequest(ctx context.Context) context.Context {
 	return ctx
 }
 
-// Close unregisters the adapter from the repository's usage stream and closes all plugins.
+// Close unregisters the adapter from the repository's usage stream and closes all plugins. Plugins registered
+// afterwards are closed straight away. Idempotent.
 func (a *Adapter) Close() {
+	a.pluginsMu.Lock()
+	if a.closed {
+		a.pluginsMu.Unlock()
+		return
+	}
+	a.closed = true
+	a.pluginsMu.Unlock()
+
 	a.repository.RemoveUsageStream(a.handlerID)
 	for _, p := range a.currentPlugins().all {
 		p.Close()
@@ -123,7 +138,10 @@ func (a *Adapter) dispatch(ctx context.Context, event UsageEvent) context.Contex
 						a.logger.WithField("panic", r).Error("usage plugin panicked during Send")
 					}
 				}()
-				ctx = p.Send(ctx, event)
+				// a plugin returning nil leaves the context as it was, as in StartRequest
+				if next := p.Send(ctx, event); next != nil {
+					ctx = next
+				}
 			}()
 		}
 	}

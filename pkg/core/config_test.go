@@ -73,7 +73,7 @@ func TestConfig(t *testing.T) {
 
 	// Get a context, check that it inherited the correct attributes:
 	newContext := newConfig.NewContext().(*ClientWithContext)
-	assert.Equal(t, newConfig.repository, newContext.repository)
+	assert.Equal(t, newConfig.currentRepository(), newContext.repository)
 	assert.NotNil(t, newContext.Custom)
 
 	// Now try WithContext:
@@ -82,7 +82,7 @@ func TestConfig(t *testing.T) {
 	}
 
 	withContext := newConfig.WithContext(customContext).(*ClientWithContext)
-	assert.Equal(t, newConfig.repository, withContext.repository)
+	assert.Equal(t, newConfig.currentRepository(), withContext.repository)
 	assert.Equal(t, "customContextKey", withContext.Userkey)
 }
 
@@ -121,7 +121,7 @@ func TestRegisterUsagePluginReceivesEvents(t *testing.T) {
 	config.RegisterUsagePlugin(plugin)
 
 	event := simpleEvent("user-1")
-	config.repository.EmitUsageEvent(context.TODO(), event)
+	config.currentRepository().EmitUsageEvent(context.TODO(), event)
 
 	received := plugin.waitForEvent(t, time.Second)
 	require.NotNil(t, received)
@@ -135,7 +135,7 @@ func TestRegisterMultipleUsagePluginsAllReceiveEvents(t *testing.T) {
 	config.RegisterUsagePlugin(p1)
 	config.RegisterUsagePlugin(p2)
 
-	config.repository.EmitUsageEvent(context.TODO(), simpleEvent("user-2"))
+	config.currentRepository().EmitUsageEvent(context.TODO(), simpleEvent("user-2"))
 
 	assert.Equal(t, "user-2", p1.waitForEvent(t, time.Second).UserKey())
 	assert.Equal(t, "user-2", p2.waitForEvent(t, time.Second).UserKey())
@@ -193,7 +193,7 @@ func TestPassiveRestPluginCallsPollOnUsageEvent(t *testing.T) {
 	mockClient := &mockEdgeClient{}
 	config.client = mockClient
 
-	config.repository.EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
+	config.currentRepository().EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
 
 	// dispatch is async — wait briefly for the goroutine to complete
 	assert.Eventually(t, func() bool { return mockClient.pollCalls.Load() == 1 }, time.Second, time.Millisecond)
@@ -206,7 +206,7 @@ func TestPassiveRestPluginDoesNotPollWhenClientIsNil(t *testing.T) {
 	// client remains nil
 
 	assert.NotPanics(t, func() {
-		config.repository.EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
+		config.currentRepository().EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
 	})
 }
 
@@ -218,7 +218,7 @@ func TestPassiveRestPluginDoesNotPollForActiveRest(t *testing.T) {
 	mockClient := &mockEdgeClient{}
 	config.client = mockClient
 
-	config.repository.EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
+	config.currentRepository().EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
 
 	// Give the goroutine time to run if it were going to
 	time.Sleep(50 * time.Millisecond)
@@ -233,7 +233,7 @@ func TestPassiveRestPluginDoesNotPollForStreaming(t *testing.T) {
 	mockClient := &mockEdgeClient{}
 	config.client = mockClient
 
-	config.repository.EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
+	config.currentRepository().EmitUsageEvent(context.TODO(), simpleEvent("user-1"))
 
 	time.Sleep(50 * time.Millisecond)
 	assert.Equal(t, int32(0), mockClient.pollCalls.Load())
@@ -431,8 +431,8 @@ func TestClosedConfigCloseIsIdempotent(t *testing.T) {
 
 func TestClosedConfigNilsInternalReferences(t *testing.T) {
 	cfg := newClosedConfig(t)
-	assert.Nil(t, cfg.repository)
-	assert.Nil(t, cfg.usageAdapter)
+	assert.Nil(t, cfg.currentRepository())
+	assert.Nil(t, cfg.repoState.Load())
 	assert.Nil(t, cfg.client)
 }
 
@@ -702,7 +702,7 @@ func TestSetRepositoryCannotReplaceTheRepository(t *testing.T) {
 
 	var alreadySet *errors.ErrRepositoryAlreadySet
 	assert.ErrorAs(t, cfg.SetRepository(NewClientFeatureHubRepository(cfg.Logger)), &alreadySet)
-	assert.Same(t, first, cfg.repository)
+	assert.Same(t, first, cfg.currentRepository())
 }
 
 func TestSetRepositoryAfterTheConfigMadeOneIsRefused(t *testing.T) {
@@ -711,14 +711,14 @@ func TestSetRepositoryAfterTheConfigMadeOneIsRefused(t *testing.T) {
 
 	var alreadySet *errors.ErrRepositoryAlreadySet
 	assert.ErrorAs(t, cfg.SetRepository(NewClientFeatureHubRepository(cfg.Logger)), &alreadySet)
-	assert.Same(t, ctx.repository, cfg.repository, "contexts already made keep using the config's repository")
+	assert.Same(t, ctx.repository, cfg.currentRepository(), "contexts already made keep using the config's repository")
 }
 
 func TestSetRepositoryOnClosedConfigIsRefused(t *testing.T) {
 	cfg := newClosedConfig(t)
 	var closed *errors.ErrConfigClosed
 	assert.ErrorAs(t, cfg.SetRepository(NewClientFeatureHubRepository(cfg.Logger)), &closed)
-	assert.Nil(t, cfg.repository)
+	assert.Nil(t, cfg.currentRepository())
 }
 
 func TestConcurrentFirstUseMakesOneRepository(t *testing.T) {
@@ -740,7 +740,7 @@ func TestConcurrentFirstUseMakesOneRepository(t *testing.T) {
 	close(repos)
 
 	for repo := range repos {
-		assert.Same(t, cfg.repository, repo)
+		assert.Same(t, cfg.currentRepository(), repo)
 	}
 }
 
@@ -766,4 +766,81 @@ func TestRequestsRacingCloseDoNotPanic(t *testing.T) {
 		cfg.Close()
 		wg.Wait()
 	}
+}
+
+// reentrantPlugin calls back into the config when it is closed, as a plugin flushing on shutdown might:
+type reentrantPlugin struct {
+	evaluationPlugin
+	config *Config
+	order  *[]string
+}
+
+func (p *reentrantPlugin) Close() {
+	p.config.IsReady()
+	p.config.NewContext()
+	p.config.StartRequest(context.Background())
+	p.config.RegisterUsagePlugin(&evaluationPlugin{})
+	*p.order = append(*p.order, "plugin")
+}
+
+func TestPluginCloseCanCallBackIntoTheConfig(t *testing.T) {
+	cfg := NewConfig("http://server", "env/key*", nil)
+	var order []string
+	cfg.RegisterUsagePlugin(&reentrantPlugin{config: cfg, order: &order})
+	cfg.AddValueInterceptor(interfaces.FeatureValueInterceptor{
+		Intercept: func(context.Context, string, interfaces.FeatureRepository, *models.FeatureState) (interface{}, bool) {
+			return nil, false
+		},
+		Close: func() { order = append(order, "interceptor") },
+	})
+
+	done := make(chan struct{})
+	go func() {
+		cfg.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close deadlocked on a plugin calling back into the config")
+	}
+	assert.Equal(t, []string{"plugin", "interceptor"}, order, "plugins are closed before the interceptors")
+}
+
+func TestRegisterUsagePluginAfterAdapterClosedClosesThePlugin(t *testing.T) {
+	cfg := NewConfig("http://server", "env/key*", nil)
+	_, adapter := cfg.repo()
+	adapter.Close() // as a Close running at the same time would, between repo() and RegisterPlugin
+
+	plugin := &closeRecordingPlugin{}
+	assert.Nil(t, cfg.RegisterUsagePlugin(plugin))
+	assert.True(t, plugin.closed)
+}
+
+type closeRecordingPlugin struct {
+	evaluationPlugin
+	closed bool
+}
+
+func (p *closeRecordingPlugin) Close() { p.closed = true }
+
+func TestEdgeTypeCanChangeWhilePluginsRead(t *testing.T) {
+	cfg := NewConfig("http://server", "env/key*", nil)
+	cfg.Logger.SetOutput(new(bytes.Buffer))
+	repository, _ := cfg.repo()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			cfg.PassiveRest(time.Minute)
+			cfg.ActiveRest(time.Minute)
+		}
+	}()
+	for i := 0; i < 50; i++ {
+		repository.EmitUsageEvent(context.Background(), simpleEvent("user"))
+	}
+	wg.Wait()
+	assert.Equal(t, models.EdgeActiveRest, cfg.EdgeType())
 }

@@ -113,3 +113,65 @@ func TestNilLoggerDoesNotTurnPluginPanicsIntoCrashes(t *testing.T) {
 
 	assert.NotPanics(t, func() { adapter.StartRequest(context.Background()) })
 }
+
+// nilPlugin is a synchronous plugin whose Send returns nil:
+type nilPlugin struct{ mockPlugin }
+
+func (p *nilPlugin) CanSendAsync() bool                               { return false }
+func (p *nilPlugin) Send(context.Context, UsageEvent) context.Context { return nil }
+
+// valuePlugin is a synchronous plugin that records the requestKey value of the context it is sent:
+type valuePlugin struct {
+	mockPlugin
+	seen []interface{}
+}
+
+func (p *valuePlugin) CanSendAsync() bool { return false }
+func (p *valuePlugin) Send(ctx context.Context, event UsageEvent) context.Context {
+	p.seen = append(p.seen, ctx.Value(requestKey{}))
+	return ctx
+}
+
+func TestSyncPluginReturningNilKeepsTheContext(t *testing.T) {
+	adapter := NewAdapter(newMockRepo(), newTestLogger())
+	adapter.RegisterPlugin(&nilPlugin{})
+	next := &valuePlugin{}
+	adapter.RegisterPlugin(next)
+
+	ctx := context.WithValue(context.Background(), requestKey{}, "kept")
+	result := adapter.dispatch(ctx, NewUsageEventWithFeature(&FeatureHubUsageValue{ID: "1", Key: "f", Value: "on"}, nil, ""))
+
+	assert.Equal(t, []interface{}{"kept"}, next.seen, "the next plugin gets the context from before the nil")
+	assert.Equal(t, "kept", result.Value(requestKey{}))
+}
+
+// closingPlugin records whether it was closed:
+type closingPlugin struct {
+	mockPlugin
+	closed bool
+}
+
+func (p *closingPlugin) Close() { p.closed = true }
+
+func TestRegisterPluginOnClosedAdapterClosesThePlugin(t *testing.T) {
+	adapter := NewAdapter(newMockRepo(), newTestLogger())
+	adapter.Close()
+	adapter.Close() // idempotent
+
+	plugin := &closingPlugin{}
+	assert.False(t, adapter.RegisterPlugin(plugin))
+	assert.True(t, plugin.closed, "a plugin registered after Close is closed, not leaked")
+	assert.Empty(t, adapter.currentPlugins().all)
+}
+
+func TestNonScopedRegistrationSharesTheScopedList(t *testing.T) {
+	adapter := NewAdapter(newMockRepo(), newTestLogger())
+	adapter.RegisterPlugin(&scopedPlugin{start: func(ctx context.Context) context.Context { return ctx }})
+	before := adapter.currentPlugins().scoped
+	adapter.RegisterPlugin(newMockPlugin())
+
+	after := adapter.currentPlugins()
+	assert.Len(t, after.all, 2)
+	assert.Len(t, after.scoped, 1)
+	assert.Same(t, &before[0], &after.scoped[0])
+}

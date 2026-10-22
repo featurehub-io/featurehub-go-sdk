@@ -62,7 +62,7 @@ func newSSETestClient(t *testing.T, serverURL string, configure func(config *cor
 	}
 
 	repo := core.NewClientFeatureHubRepository(config.Logger)
-	config.SetRepository(repo)
+	require.NoError(t, config.SetRepository(repo))
 
 	client, err := NewStreamingClient(config, repo)
 	require.NoError(t, err)

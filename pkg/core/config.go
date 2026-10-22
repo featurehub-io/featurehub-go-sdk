@@ -31,20 +31,19 @@ const DefaultSSEMaxRetryDelay = time.Minute
 type Config struct {
 	LogLevel          logrus.Level // Logging level (default is "info")
 	Logger            *logrus.Logger
-	SDKKey            string                      // SDK key (copied from the UI), in the format "{namedCache}/environmentID/APIKey"
-	additionalSDKKeys []string                    // extra SDK keys appended to polling requests
-	ServerAddress     string                      // FeatureHub API endpoint
-	WaitForData       *time.Duration              // if set, how long a repository will wait before aborting connection attempt
-	repoMu            sync.RWMutex                // guards repository and usageAdapter; taken after edgeMu, never before
-	repository        *ClientFeatureHubRepository // A FeatureHub repository implementation, set once
-	usageAdapter      *usage.Adapter
+	SDKKey            string                    // SDK key (copied from the UI), in the format "{namedCache}/environmentID/APIKey"
+	additionalSDKKeys []string                  // extra SDK keys appended to polling requests
+	ServerAddress     string                    // FeatureHub API endpoint
+	WaitForData       *time.Duration            // if set, how long a repository will wait before aborting connection attempt
+	repoMu            sync.Mutex                // makes setting, creating and discarding repoState take turns; taken after edgeMu, never before
+	repoState         atomic.Pointer[repoState] // the repository and its usage adapter, set once (nil before first use and once closed)
 	EdgeProvider      EdgeProviderFunc
 	fatalErrorHandler atomic.Pointer[interfaces.ErrorFunc] // A user-provided handler func for fatal asynchronous errors, read by edge clients' goroutines
-	requestedEdgeType models.EdgeType
-	timeout           time.Duration // timeout if using polling
-	sseReadTimeout    time.Duration // how long a streaming connection may go without receiving data before reconnecting
-	sseMaxRetryDelay  time.Duration // the longest delay between streaming reconnect attempts
-	edgeMu            sync.Mutex    // guards client, and makes Connect, Build, Close and the edge type changes take turns
+	requestedEdgeType atomic.Value                         // models.EdgeType, written under edgeMu but read by usage plugin goroutines
+	timeout           time.Duration                        // timeout if using polling
+	sseReadTimeout    time.Duration                        // how long a streaming connection may go without receiving data before reconnecting
+	sseMaxRetryDelay  time.Duration                        // the longest delay between streaming reconnect attempts
+	edgeMu            sync.Mutex                           // guards client, and makes Connect, Build, Close and the edge type changes take turns
 	client            interfaces.EdgeClient
 	closed            atomic.Bool
 }
@@ -68,17 +67,24 @@ func NewConfig(serverAddress, sdkKey string, edgeProvider EdgeProviderFunc) *Con
 		defaultEdge = models.EdgePassiveRest
 	}
 
-	return &Config{
-		LogLevel:          defaultLogLevel,
-		Logger:            logger,
-		SDKKey:            sdkKey,
-		requestedEdgeType: defaultEdge,
-		ServerAddress:     serverAddress,
-		EdgeProvider:      edgeProvider,
-		timeout:           timeout,
-		sseReadTimeout:    EnvOrDefaultDuration("FEATUREHUB_SSE_READ_TIMEOUT", DefaultSSEReadTimeout),
-		sseMaxRetryDelay:  EnvOrDefaultDuration("FEATUREHUB_SSE_MAX_RETRY_DELAY", DefaultSSEMaxRetryDelay),
+	config := &Config{
+		LogLevel:         defaultLogLevel,
+		Logger:           logger,
+		SDKKey:           sdkKey,
+		ServerAddress:    serverAddress,
+		EdgeProvider:     edgeProvider,
+		timeout:          timeout,
+		sseReadTimeout:   EnvOrDefaultDuration("FEATUREHUB_SSE_READ_TIMEOUT", DefaultSSEReadTimeout),
+		sseMaxRetryDelay: EnvOrDefaultDuration("FEATUREHUB_SSE_MAX_RETRY_DELAY", DefaultSSEMaxRetryDelay),
 	}
+	config.requestedEdgeType.Store(defaultEdge)
+	return config
+}
+
+// repoState is a config's repository and its usage adapter. It is never changed once published:
+type repoState struct {
+	repository *ClientFeatureHubRepository
+	adapter    *usage.Adapter
 }
 
 // passiveRestPollPlugin triggers a passive-REST poll whenever a usage event is emitted.
@@ -91,7 +97,10 @@ func (p *passiveRestPollPlugin) CanSendAsync() bool                           { 
 func (p *passiveRestPollPlugin) Close()                                       {}
 
 func (p *passiveRestPollPlugin) Send(ctx context.Context, _ usage.UsageEvent) context.Context {
-	if client := p.config.edgeClient(); client != nil && p.config.requestedEdgeType == models.EdgePassiveRest {
+	if p.config.EdgeType() != models.EdgePassiveRest {
+		return ctx
+	}
+	if client := p.config.edgeClient(); client != nil {
 		client.Poll() //nolint:errcheck
 	}
 	return ctx
@@ -124,8 +133,8 @@ func (c *Config) SetRepository(repository *ClientFeatureHubRepository) error {
 	if c.closed.Load() {
 		return errors.NewErrConfigClosed()
 	}
-	if c.repository != nil {
-		if c.repository == repository {
+	if state := c.repoState.Load(); state != nil {
+		if state.repository == repository {
 			return nil
 		}
 		return errors.NewErrRepositoryAlreadySet()
@@ -134,30 +143,44 @@ func (c *Config) SetRepository(repository *ClientFeatureHubRepository) error {
 	return nil
 }
 
-// useRepository sets the repository and its usage adapter. repoMu must be held for writing:
-func (c *Config) useRepository(repository *ClientFeatureHubRepository) {
-	c.repository = repository
-	c.usageAdapter = usage.NewAdapter(repository, c.Logger)
-	c.usageAdapter.RegisterPlugin(&passiveRestPollPlugin{config: c})
+// useRepository publishes the repository with a new usage adapter. repoMu must be held:
+func (c *Config) useRepository(repository *ClientFeatureHubRepository) *repoState {
+	adapter := usage.NewAdapter(repository, c.Logger)
+	adapter.RegisterPlugin(&passiveRestPollPlugin{config: c})
+	state := &repoState{repository: repository, adapter: adapter}
+	c.repoState.Store(state)
+	return state
 }
 
 // repo returns the repository and its usage adapter, creating them on first use, or nils if the config is closed.
-// Callers use the returned values, not the fields, as Close may nil the fields at any time:
+// Reading them takes no lock. Callers use the returned values, which stay usable even if Close runs meanwhile:
 func (c *Config) repo() (*ClientFeatureHubRepository, *usage.Adapter) {
-	c.repoMu.RLock()
-	repository, adapter := c.repository, c.usageAdapter
-	c.repoMu.RUnlock()
-	if repository != nil || c.closed.Load() {
-		return repository, adapter
+	if state := c.repoState.Load(); state != nil {
+		return state.repository, state.adapter
+	}
+	if c.closed.Load() {
+		return nil, nil
 	}
 
 	c.repoMu.Lock()
 	defer c.repoMu.Unlock()
-	// Close sets closed before it takes repoMu, so a repository made here is always closed by it
-	if c.repository == nil && !c.closed.Load() {
-		c.useRepository(NewClientFeatureHubRepository(c.Logger))
+	// Close sets closed before it takes repoMu, so a repository made here is always discarded and closed by it
+	if c.closed.Load() {
+		return nil, nil
 	}
-	return c.repository, c.usageAdapter
+	state := c.repoState.Load()
+	if state == nil {
+		state = c.useRepository(NewClientFeatureHubRepository(c.Logger))
+	}
+	return state.repository, state.adapter
+}
+
+// currentRepository returns the repository without creating one, or nil:
+func (c *Config) currentRepository() *ClientFeatureHubRepository {
+	if state := c.repoState.Load(); state != nil {
+		return state.repository
+	}
+	return nil
 }
 
 // edgeClient returns the current edge client, or nil:
@@ -176,25 +199,26 @@ func (c *Config) closeEdge() {
 }
 
 // Close shuts down the edge client, releases all interceptors and plugins, nils all
-// internal references, and marks the config as closed. Idempotent.
+// internal references, and marks the config as closed. Idempotent. Plugins and interceptors are closed without
+// any lock held, so their Close may call back into the config (which is then closed).
 func (c *Config) Close() {
 	c.edgeMu.Lock()
-	defer c.edgeMu.Unlock()
 	if c.closed.Load() {
+		c.edgeMu.Unlock()
 		return
 	}
 	c.closed.Store(true)
 	c.closeEdge()
 
 	c.repoMu.Lock()
-	defer c.repoMu.Unlock()
-	if c.repository != nil {
-		c.repository.Close()
-		c.repository = nil
-	}
-	if c.usageAdapter != nil {
-		c.usageAdapter.Close()
-		c.usageAdapter = nil
+	state := c.repoState.Swap(nil)
+	c.repoMu.Unlock()
+	c.edgeMu.Unlock()
+
+	if state != nil {
+		// the adapter first, so no more usage events reach the plugins once the interceptors start closing
+		state.adapter.Close()
+		state.repository.Close()
 	}
 }
 
@@ -207,7 +231,7 @@ func (c *Config) PassiveRest(interval time.Duration) *Config {
 	c.edgeMu.Lock()
 	defer c.edgeMu.Unlock()
 	c.closeEdge()
-	c.requestedEdgeType = models.EdgePassiveRest
+	c.requestedEdgeType.Store(models.EdgePassiveRest)
 	c.timeout = interval
 	return c
 }
@@ -216,7 +240,7 @@ func (c *Config) ActiveRest(timeout time.Duration) *Config {
 	c.edgeMu.Lock()
 	defer c.edgeMu.Unlock()
 	c.closeEdge()
-	c.requestedEdgeType = models.EdgeActiveRest
+	c.requestedEdgeType.Store(models.EdgeActiveRest)
 	c.timeout = timeout
 	return c
 }
@@ -225,13 +249,14 @@ func (c *Config) Streaming() *Config {
 	c.edgeMu.Lock()
 	defer c.edgeMu.Unlock()
 	c.closeEdge()
-	c.requestedEdgeType = models.EdgeStreaming
+	c.requestedEdgeType.Store(models.EdgeStreaming)
 	c.timeout = time.Millisecond * 0
 	return c
 }
 
 func (c *Config) EdgeType() models.EdgeType {
-	return c.requestedEdgeType
+	edgeType, _ := c.requestedEdgeType.Load().(models.EdgeType)
+	return edgeType
 }
 
 // IsReady - Is the repository ready, does it have its initial state?
@@ -343,10 +368,10 @@ func (c *Config) NewContext() interfaces.Context {
 
 func (c *Config) RegisterUsagePlugin(plugin usage.Plugin) interfaces.FeatureHubConfig {
 	_, adapter := c.repo()
-	if adapter == nil {
+	// a closed adapter (Close ran meanwhile) closes the plugin rather than keeping it
+	if adapter == nil || !adapter.RegisterPlugin(plugin) {
 		return nil
 	}
-	adapter.RegisterPlugin(plugin)
 
 	return c
 }
