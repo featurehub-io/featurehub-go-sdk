@@ -35,8 +35,9 @@ type Config struct {
 	additionalSDKKeys []string                  // extra SDK keys appended to polling requests
 	ServerAddress     string                    // FeatureHub API endpoint
 	WaitForData       *time.Duration            // if set, how long a repository will wait before aborting connection attempt
-	repoMu            sync.Mutex                // makes setting, creating and discarding repoState take turns; taken after edgeMu, never before
-	repoState         atomic.Pointer[repoState] // the repository and its usage adapter, set once (nil before first use and once closed)
+	repoMu            sync.Mutex                // makes setting, creating and discarding state take turns; taken after edgeMu, never before
+	state             atomic.Pointer[repoState] // the repository and its usage adapter, set once (nil before first use and once closed)
+	closeDone         chan struct{}             // made by the first Close (under edgeMu) and closed when it has finished
 	EdgeProvider      EdgeProviderFunc
 	fatalErrorHandler atomic.Pointer[interfaces.ErrorFunc] // A user-provided handler func for fatal asynchronous errors, read by edge clients' goroutines
 	requestedEdgeType atomic.Value                         // models.EdgeType, written under edgeMu but read by usage plugin goroutines
@@ -100,7 +101,7 @@ func (p *passiveRestPollPlugin) Send(ctx context.Context, _ usage.UsageEvent) co
 	if p.config.EdgeType() != models.EdgePassiveRest {
 		return ctx
 	}
-	if client := p.config.edgeClient(); client != nil {
+	if client := p.config.passiveEdgeClient(); client != nil {
 		client.Poll() //nolint:errcheck
 	}
 	return ctx
@@ -133,7 +134,7 @@ func (c *Config) SetRepository(repository *ClientFeatureHubRepository) error {
 	if c.closed.Load() {
 		return errors.NewErrConfigClosed()
 	}
-	if state := c.repoState.Load(); state != nil {
+	if state := c.state.Load(); state != nil {
 		if state.repository == repository {
 			return nil
 		}
@@ -148,14 +149,14 @@ func (c *Config) useRepository(repository *ClientFeatureHubRepository) *repoStat
 	adapter := usage.NewAdapter(repository, c.Logger)
 	adapter.RegisterPlugin(&passiveRestPollPlugin{config: c})
 	state := &repoState{repository: repository, adapter: adapter}
-	c.repoState.Store(state)
+	c.state.Store(state)
 	return state
 }
 
 // repo returns the repository and its usage adapter, creating them on first use, or nils if the config is closed.
 // Reading them takes no lock. Callers use the returned values, which stay usable even if Close runs meanwhile:
 func (c *Config) repo() (*ClientFeatureHubRepository, *usage.Adapter) {
-	if state := c.repoState.Load(); state != nil {
+	if state := c.state.Load(); state != nil {
 		return state.repository, state.adapter
 	}
 	if c.closed.Load() {
@@ -168,25 +169,21 @@ func (c *Config) repo() (*ClientFeatureHubRepository, *usage.Adapter) {
 	if c.closed.Load() {
 		return nil, nil
 	}
-	state := c.repoState.Load()
+	state := c.state.Load()
 	if state == nil {
 		state = c.useRepository(NewClientFeatureHubRepository(c.Logger))
 	}
 	return state.repository, state.adapter
 }
 
-// currentRepository returns the repository without creating one, or nil:
-func (c *Config) currentRepository() *ClientFeatureHubRepository {
-	if state := c.repoState.Load(); state != nil {
-		return state.repository
-	}
-	return nil
-}
-
-// edgeClient returns the current edge client, or nil:
-func (c *Config) edgeClient() interfaces.EdgeClient {
+// passiveEdgeClient returns the edge client if it is a passive-REST one, or nil. The edge type and client are
+// read together under edgeMu, so a concurrent change of edge type cannot pair the old type with the new client:
+func (c *Config) passiveEdgeClient() interfaces.EdgeClient {
 	c.edgeMu.Lock()
 	defer c.edgeMu.Unlock()
+	if c.EdgeType() != models.EdgePassiveRest {
+		return nil
+	}
 	return c.client
 }
 
@@ -199,19 +196,27 @@ func (c *Config) closeEdge() {
 }
 
 // Close shuts down the edge client, releases all interceptors and plugins, nils all
-// internal references, and marks the config as closed. Idempotent. Plugins and interceptors are closed without
-// any lock held, so their Close may call back into the config (which is then closed).
+// internal references, and marks the config as closed. Idempotent: a Close while another is running waits for it
+// to finish, so plugins have flushed when any Close returns. Plugins and interceptors are closed without any lock
+// held, so their Close may call back into the config (which is then closed), except to call Close itself.
 func (c *Config) Close() {
 	c.edgeMu.Lock()
 	if c.closed.Load() {
+		done := c.closeDone
 		c.edgeMu.Unlock()
+		if done != nil {
+			<-done
+		}
 		return
 	}
 	c.closed.Store(true)
+	done := make(chan struct{})
+	c.closeDone = done
+	defer close(done)
 	c.closeEdge()
 
 	c.repoMu.Lock()
-	state := c.repoState.Swap(nil)
+	state := c.state.Swap(nil)
 	c.repoMu.Unlock()
 	c.edgeMu.Unlock()
 

@@ -727,12 +727,15 @@ repo := core.NewClientFeatureHubRepository(logger)
 // set the field directly since you own the repository before passing it to Config:
 // (extend ClientFeatureHubRepository or use SetRepository after creation)
 
-fhConfig := core.NewConfig(serverAddress, apiKey, edgeProvider)
 // a config has one repository for its lifetime, so set it before anything else uses the config;
-// once it has one (including one it made itself), SetRepository returns ErrRepositoryAlreadySet
-if err := fhConfig.SetRepository(repo); err != nil {
-    // the config keeps the repository it already has
-    logger.WithError(err).Error("custom repository not used")
+// once it has one (including one it made itself), SetRepository returns ErrRepositoryAlreadySet,
+// and on a closed config ErrConfigClosed. Return the error, so the caller can see which:
+func newFeatureHubConfig(repo *core.ClientFeatureHubRepository) (*core.Config, error) {
+    fhConfig := core.NewConfig(serverAddress, apiKey, edgeProvider)
+    if err := fhConfig.SetRepository(repo); err != nil {
+        return nil, fmt.Errorf("custom FeatureHub repository: %w", err)
+    }
+    return fhConfig, nil
 }
 ```
 

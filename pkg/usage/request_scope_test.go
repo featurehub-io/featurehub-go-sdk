@@ -3,6 +3,7 @@ package usage
 import (
 	"bytes"
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -174,4 +175,70 @@ func TestNonScopedRegistrationSharesTheScopedList(t *testing.T) {
 	assert.Len(t, after.all, 2)
 	assert.Len(t, after.scoped, 1)
 	assert.Same(t, &before[0], &after.scoped[0])
+}
+
+// blockingPlugin is an asynchronous plugin whose Send waits to be released, and which records the order of
+// Send and Close:
+type blockingPlugin struct {
+	mockPlugin
+	started chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	order   []string
+}
+
+func (p *blockingPlugin) CanSendAsync() bool { return true }
+func (p *blockingPlugin) Send(ctx context.Context, event UsageEvent) context.Context {
+	close(p.started)
+	<-p.release
+	p.record("send")
+	return ctx
+}
+func (p *blockingPlugin) Close() { p.record("close") }
+func (p *blockingPlugin) record(what string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.order = append(p.order, what)
+}
+
+func TestAdapterCloseWaitsForSendsInProgress(t *testing.T) {
+	repo := newMockRepo()
+	adapter := NewAdapter(repo, newTestLogger())
+	plugin := &blockingPlugin{started: make(chan struct{}), release: make(chan struct{})}
+	adapter.RegisterPlugin(plugin)
+
+	repo.emit(NewUsageEventWithFeature(&FeatureHubUsageValue{ID: "1", Key: "f", Value: "on"}, nil, ""))
+	<-plugin.started
+
+	closed := make(chan struct{})
+	go func() {
+		adapter.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while a Send was in progress")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(plugin.release)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not return once the Send finished")
+	}
+	assert.Equal(t, []string{"send", "close"}, plugin.order, "the plugin is closed only after its Send has finished")
+}
+
+func TestClosedAdapterSendsNothing(t *testing.T) {
+	adapter := NewAdapter(newMockRepo(), newTestLogger())
+	plugin := &valuePlugin{}
+	adapter.RegisterPlugin(plugin)
+	adapter.Close()
+
+	// an emit that had already copied the handler before Close removed it
+	adapter.dispatch(context.Background(), NewUsageEventWithFeature(&FeatureHubUsageValue{ID: "1", Key: "f", Value: "on"}, nil, ""))
+	adapter.StartRequest(context.Background())
+
+	assert.Empty(t, plugin.seen)
 }

@@ -432,7 +432,7 @@ func TestClosedConfigCloseIsIdempotent(t *testing.T) {
 func TestClosedConfigNilsInternalReferences(t *testing.T) {
 	cfg := newClosedConfig(t)
 	assert.Nil(t, cfg.currentRepository())
-	assert.Nil(t, cfg.repoState.Load())
+	assert.Nil(t, cfg.state.Load())
 	assert.Nil(t, cfg.client)
 }
 
@@ -843,4 +843,68 @@ func TestEdgeTypeCanChangeWhilePluginsRead(t *testing.T) {
 	}
 	wg.Wait()
 	assert.Equal(t, models.EdgeActiveRest, cfg.EdgeType())
+}
+
+// currentRepository returns the repository without creating one, or nil:
+func (c *Config) currentRepository() *ClientFeatureHubRepository {
+	if state := c.state.Load(); state != nil {
+		return state.repository
+	}
+	return nil
+}
+
+// edgeClient returns the current edge client, or nil:
+func (c *Config) edgeClient() interfaces.EdgeClient {
+	c.edgeMu.Lock()
+	defer c.edgeMu.Unlock()
+	return c.client
+}
+
+// slowClosePlugin waits to be released when it is closed:
+type slowClosePlugin struct {
+	evaluationPlugin
+	closing chan struct{}
+	release chan struct{}
+}
+
+func (p *slowClosePlugin) Close() {
+	close(p.closing)
+	<-p.release
+}
+
+func TestSecondCloseWaitsForTheFirst(t *testing.T) {
+	cfg := NewConfig("http://server", "env/key*", nil)
+	plugin := &slowClosePlugin{closing: make(chan struct{}), release: make(chan struct{})}
+	cfg.RegisterUsagePlugin(plugin)
+
+	go cfg.Close()
+	<-plugin.closing
+
+	second := make(chan struct{})
+	go func() {
+		cfg.Close()
+		close(second)
+	}()
+	select {
+	case <-second:
+		t.Fatal("a second Close returned while the first was still closing plugins")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(plugin.release)
+	select {
+	case <-second:
+	case <-time.After(time.Second):
+		t.Fatal("the second Close did not return once the first finished")
+	}
+}
+
+func TestPassivePollPluginIgnoresOtherEdgeTypes(t *testing.T) {
+	config := NewConfig("http://localhost", "default/env/key", nil)
+	config.ActiveRest(time.Minute)
+	mockClient := &mockEdgeClient{}
+	config.client = mockClient
+
+	(&passiveRestPollPlugin{config: config}).Send(context.Background(), simpleEvent("user"))
+	assert.Zero(t, mockClient.pollCalls.Load())
 }

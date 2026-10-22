@@ -24,7 +24,9 @@ type ClientFeatureHubRepository struct {
 	notifiers         notifiers
 	notifiersMutex    sync.Mutex
 	readinessListener func(context context.Context)
-	valueInterceptors []interfaces.FeatureValueInterceptor
+	interceptorsMu    sync.Mutex                                           // makes AddValueInterceptor and Close take turns, and guards interceptorsDone
+	valueInterceptors atomic.Pointer[[]interfaces.FeatureValueInterceptor] // replaced (never changed) when one is added, so reads take no lock
+	interceptorsDone  bool                                                 // set by Close; interceptors added afterwards are closed straight away
 	usageProvider     usage.ProviderFactory
 	usageStreams      map[int]usage.StreamHandler
 	usageStreamsMu    sync.Mutex
@@ -148,17 +150,44 @@ func (r *ClientFeatureHubRepository) WithContext(context *models.Context) interf
 	}
 }
 
+// AddValueInterceptor adds an interceptor, which is checked on every feature read. Once the repository is closed,
+// the interceptor is closed straight away instead, so it is never left open.
 func (r *ClientFeatureHubRepository) AddValueInterceptor(valueInterceptor interfaces.FeatureValueInterceptor) {
-	if r.valueInterceptors == nil {
-		r.valueInterceptors = make([]interfaces.FeatureValueInterceptor, 0)
+	r.interceptorsMu.Lock()
+	if r.interceptorsDone {
+		r.interceptorsMu.Unlock()
+		if valueInterceptor.Close != nil {
+			valueInterceptor.Close()
+		}
+		return
 	}
+	defer r.interceptorsMu.Unlock()
 
-	r.valueInterceptors = append(r.valueInterceptors, valueInterceptor)
+	// the published slice is never changed, as reads may be using it
+	current := r.interceptors()
+	next := append(append(make([]interfaces.FeatureValueInterceptor, 0, len(current)+1), current...), valueInterceptor)
+	r.valueInterceptors.Store(&next)
 }
 
-// Close calls Close on every registered value interceptor, releasing their resources.
+// interceptors returns the registered value interceptors, which must not be changed:
+func (r *ClientFeatureHubRepository) interceptors() []interfaces.FeatureValueInterceptor {
+	if list := r.valueInterceptors.Load(); list != nil {
+		return *list
+	}
+	return nil
+}
+
+// Close calls Close on every registered value interceptor, releasing their resources. Idempotent.
 func (r *ClientFeatureHubRepository) Close() {
-	for _, interceptor := range r.valueInterceptors {
+	r.interceptorsMu.Lock()
+	if r.interceptorsDone {
+		r.interceptorsMu.Unlock()
+		return
+	}
+	r.interceptorsDone = true
+	r.interceptorsMu.Unlock()
+
+	for _, interceptor := range r.interceptors() {
 		if interceptor.Close != nil {
 			interceptor.Close()
 		}
@@ -187,8 +216,8 @@ func (r *ClientFeatureHubRepository) GetFeature(context context.Context, key str
 	feature, ok := r.features[key]
 
 	// regardless of whether we found it or not, we need to walk the interceptors passing what we found
-	if r.valueInterceptors != nil {
-		for _, valueInterceptor := range r.valueInterceptors {
+	if interceptors := r.interceptors(); interceptors != nil {
+		for _, valueInterceptor := range interceptors {
 			if value, matched := valueInterceptor.Intercept(context, key, r, feature); matched {
 				r.logger.WithField("key", key).Trace("Found matching interceptor")
 				return feature, matched, value, nil

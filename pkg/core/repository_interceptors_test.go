@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
@@ -40,13 +41,13 @@ func interceptorThatMisses() interfaces.FeatureValueInterceptor {
 
 func TestAddValueInterceptorAppendsToSlice(t *testing.T) {
 	repo := createRepository()
-	assert.Nil(t, repo.valueInterceptors)
+	assert.Nil(t, repo.interceptors())
 
 	repo.AddValueInterceptor(interceptorThatMisses())
-	assert.Len(t, repo.valueInterceptors, 1)
+	assert.Len(t, repo.interceptors(), 1)
 
 	repo.AddValueInterceptor(interceptorThatMisses())
-	assert.Len(t, repo.valueInterceptors, 2)
+	assert.Len(t, repo.interceptors(), 2)
 }
 
 // --- GetFeature: interceptor behaviour ---
@@ -278,4 +279,41 @@ func TestInterceptorCanTargetSpecificKey(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, labelValue)
 	assert.Equal(t, "default", *labelValue, "non-targeted key should use stored value")
+}
+
+func TestAddValueInterceptorWhileReading(t *testing.T) {
+	repo := createRepository()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			repo.AddValueInterceptor(interceptorThatMisses())
+		}
+	}()
+	for i := 0; i < 50; i++ {
+		repo.GetFeature(context.Background(), "missing") //nolint:errcheck
+	}
+	wg.Wait()
+	assert.Len(t, repo.interceptors(), 50)
+}
+
+func TestInterceptorAddedAfterCloseIsClosed(t *testing.T) {
+	repo := createRepository()
+	closes := 0
+	repo.AddValueInterceptor(interfaces.FeatureValueInterceptor{
+		Intercept: interceptorThatMisses().Intercept,
+		Close:     func() { closes++ },
+	})
+	repo.Close()
+	repo.Close() // idempotent: each interceptor is closed once
+	assert.Equal(t, 1, closes)
+
+	late := false
+	repo.AddValueInterceptor(interfaces.FeatureValueInterceptor{
+		Intercept: interceptorThatMisses().Intercept,
+		Close:     func() { late = true },
+	})
+	assert.True(t, late, "an interceptor added after Close is closed, not leaked")
+	assert.Len(t, repo.interceptors(), 1)
 }
