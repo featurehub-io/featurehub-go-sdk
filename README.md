@@ -568,6 +568,8 @@ fhConfig.Connect()
 
 Multiple plugins can be registered. When `CanSendAsync()` returns `true`, `Send` is called in its own goroutine and the returned context is discarded. When `CanSendAsync()` returns `false`, `Send` is called synchronously, before the feature read returns, and its returned context is passed to the next plugin only — it never reaches the code that read the feature. Panics inside `Send` are caught and logged in both cases — one failing plugin does not affect others.
 
+`Close()` waits for sends already in progress (including asynchronous ones) to finish before closing the plugins, so a plugin is never sent an event during or after its `Close`. The wait is limited to 5 seconds by default (`WithCloseTimeout`); if a send is still stuck then, the timeout is logged and the plugins are closed anyway, so a stuck plugin can never hang shutdown. A second `Close()` running at the same time waits, within the same limit, for the first to finish.
+
 ### Request-scoped usage plugins
 
 A plugin that needs state for each request, such as the features evaluated during it, implements `usage.RequestScopedPlugin`:

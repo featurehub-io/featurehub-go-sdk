@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/models"
@@ -315,5 +317,105 @@ func TestInterceptorAddedAfterCloseIsClosed(t *testing.T) {
 		Close:     func() { late = true },
 	})
 	assert.True(t, late, "an interceptor added after Close is closed, not leaked")
-	assert.Len(t, repo.interceptors(), 1)
+	assert.Empty(t, repo.interceptors(), "closed interceptors are no longer called by feature reads")
+}
+
+func TestClosedInterceptorsAreNotCalled(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeature(ffs(`{"id":"id-a","key":"a","type":"BOOLEAN","value":true,"version":1}`))
+	calls := 0
+	repo.AddValueInterceptor(interfaces.NewInterceptor(func(context.Context, string, interfaces.FeatureRepository, *models.FeatureState) (interface{}, bool) {
+		calls++
+		return false, true
+	}))
+	repo.Close()
+
+	_, _, value, err := repo.GetFeature(context.Background(), "a")
+	assert.NoError(t, err)
+	assert.Equal(t, true, value, "the feature's own value, not the closed interceptor's")
+	assert.Zero(t, calls)
+}
+
+func TestSecondRepositoryCloseWaitsForTheFirst(t *testing.T) {
+	repo := createRepository()
+	closing, release := make(chan struct{}), make(chan struct{})
+	repo.AddValueInterceptor(interfaces.FeatureValueInterceptor{
+		Intercept: interceptorThatMisses().Intercept,
+		Close: func() {
+			close(closing)
+			<-release
+		},
+	})
+	go repo.Close()
+	<-closing
+
+	second := make(chan struct{})
+	go func() {
+		repo.closeWithin(time.Second)
+		close(second)
+	}()
+	select {
+	case <-second:
+		t.Fatal("a second Close returned while the first was still closing interceptors")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-second:
+	case <-time.After(time.Second):
+		t.Fatal("the second Close did not return once the first finished")
+	}
+}
+
+func TestInterceptorCanReadFeatures(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeature(ffs(`{"id":"id-a","key":"a","type":"BOOLEAN","value":true,"version":1}`))
+	repo.ProcessFeature(ffs(`{"id":"id-b","key":"b","type":"BOOLEAN","value":false,"version":1}`))
+	// an interceptor that makes "b" follow "a" reads a feature while "b" is being read
+	repo.AddValueInterceptor(interfaces.NewInterceptor(func(ctx context.Context, key string, r interfaces.FeatureRepository, _ *models.FeatureState) (interface{}, bool) {
+		if key != "b" {
+			return nil, false
+		}
+		_, _, value, err := r.GetFeature(ctx, "a")
+		return value, err == nil
+	}))
+
+	done := make(chan interface{})
+	go func() {
+		_, _, value, _ := repo.GetFeature(context.Background(), "b")
+		done <- value
+	}()
+	select {
+	case value := <-done:
+		assert.Equal(t, true, value)
+	case <-time.After(time.Second):
+		t.Fatal("an interceptor reading a feature deadlocked")
+	}
+}
+
+func TestFeatureReadsWhileFeaturesChange(t *testing.T) {
+	repo := createRepository()
+	repo.ProcessFeature(ffs(`{"id":"id-a","key":"a","type":"BOOLEAN","value":true,"version":1}`))
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 2; i < 50; i++ {
+			repo.ProcessFeature(ffs(fmt.Sprintf(`{"id":"id-a","key":"a","type":"BOOLEAN","value":true,"version":%d}`, i)))
+			repo.ProcessFeature(ffs(fmt.Sprintf(`{"id":"id-%d","key":"k%d","type":"BOOLEAN","value":true,"version":1}`, i, i)))
+			repo.ProcessDeleteFeature(ffs(fmt.Sprintf(`{"id":"id-%d","key":"k%d"}`, i, i)))
+		}
+		repo.ProcessFeatures([]*models.FeatureState{ffs(`{"id":"id-a","key":"a","type":"BOOLEAN","value":true,"version":99}`)})
+	}()
+	for i := 0; i < 200; i++ {
+		_, _, value, err := repo.GetFeature(context.Background(), "a")
+		assert.NoError(t, err)
+		assert.Equal(t, true, value)
+		repo.Properties(context.Background(), "a")
+		repo.AllKeys()
+		repo.GetFeatures()
+	}
+	wg.Wait()
+	assert.Equal(t, []string{"a"}, repo.AllKeys())
 }

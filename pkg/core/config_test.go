@@ -899,12 +899,51 @@ func TestSecondCloseWaitsForTheFirst(t *testing.T) {
 	}
 }
 
-func TestPassivePollPluginIgnoresOtherEdgeTypes(t *testing.T) {
+func TestPassiveEdgeClientChecksTheEdgeTypeUnderTheLock(t *testing.T) {
 	config := NewConfig("http://localhost", "default/env/key", nil)
-	config.ActiveRest(time.Minute)
 	mockClient := &mockEdgeClient{}
-	config.client = mockClient
 
-	(&passiveRestPollPlugin{config: config}).Send(context.Background(), simpleEvent("user"))
-	assert.Zero(t, mockClient.pollCalls.Load())
+	// as if the edge type changed to active REST after Send's lock-free check passed
+	config.ActiveRest(time.Minute)
+	config.client = mockClient
+	assert.Nil(t, config.passiveEdgeClient(), "an active REST client is never returned")
+
+	config.PassiveRest(time.Minute)
+	config.client = mockClient
+	assert.Same(t, mockClient, config.passiveEdgeClient())
+}
+
+// closeCallingPlugin calls Config.Close from its own Close, as cleanup code might:
+type closeCallingPlugin struct {
+	evaluationPlugin
+	config *Config
+}
+
+func (p *closeCallingPlugin) Close() { p.config.Close() }
+
+func TestPluginCallingCloseFromCloseDoesNotHang(t *testing.T) {
+	cfg := NewConfig("http://server", "env/key*", nil)
+	cfg.Logger.SetOutput(new(bytes.Buffer))
+	cfg.WithCloseTimeout(50 * time.Millisecond)
+	cfg.RegisterUsagePlugin(&closeCallingPlugin{config: cfg})
+
+	done := make(chan struct{})
+	go func() {
+		cfg.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a plugin calling Close from its Close hung Close")
+	}
+}
+
+func TestCloseTimeoutDefault(t *testing.T) {
+	cfg := NewConfig("http://server", "env/key*", nil)
+	assert.Equal(t, DefaultCloseTimeout, cfg.CloseTimeout())
+	cfg.WithCloseTimeout(-1)
+	assert.Equal(t, DefaultCloseTimeout, cfg.CloseTimeout())
+	cfg.WithCloseTimeout(time.Second)
+	assert.Equal(t, time.Second, cfg.CloseTimeout())
 }

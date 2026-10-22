@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -24,14 +25,18 @@ type pluginSet struct {
 	scoped []RequestScopedPlugin
 }
 
+// DefaultCloseTimeout is the longest Close waits for work already in progress (usage sends, or another Close) to
+// finish before it carries on regardless, so a stuck plugin can never hang shutdown.
+const DefaultCloseTimeout = 5 * time.Second
+
 // Adapter fans usage events from a StreamableRepository out to registered Plugins.
 type Adapter struct {
 	pluginsMu  sync.Mutex                // makes RegisterPlugin and Close take turns
 	plugins    atomic.Pointer[pluginSet] // replaced (never changed) by RegisterPlugin, so every read is lock-free
 	closed     atomic.Bool               // set (under pluginsMu) by Close; read without a lock by dispatch
 	active     atomic.Int64              // dispatches, async sends and StartRequests in progress
-	idleMu     sync.Mutex
-	idle       *sync.Cond // signalled when active reaches zero once closed
+	idle       chan struct{}             // closed (once, by idleOnce) when active reaches zero once closed
+	idleOnce   sync.Once
 	repository StreamableRepository
 	handlerID  int
 	logger     *logrus.Logger
@@ -47,7 +52,7 @@ func NewAdapter(repository StreamableRepository, logger *logrus.Logger) *Adapter
 		repository: repository,
 		logger:     logger,
 	}
-	a.idle = sync.NewCond(&a.idleMu)
+	a.idle = make(chan struct{})
 	a.plugins.Store(&pluginSet{})
 	a.handlerID = repository.RegisterUsageStream(func(ctx context.Context, event UsageEvent) {
 		a.dispatch(ctx, event)
@@ -124,36 +129,49 @@ func (a *Adapter) enter() bool {
 
 func (a *Adapter) leave() {
 	if a.active.Add(-1) == 0 && a.closed.Load() {
-		a.idleMu.Lock()
-		a.idle.Broadcast()
-		a.idleMu.Unlock()
+		a.idleOnce.Do(func() { close(a.idle) })
 	}
 }
 
-// Close unregisters the adapter from the repository's usage stream, waits for the dispatches already in progress
-// (including asynchronous sends) to finish, and then closes all plugins, so no plugin is sent an event during or
-// after its Close. Plugins registered afterwards are closed straight away. Idempotent. A plugin's Send must not
-// close the adapter (or the config that owns it), as Close would wait for that Send.
+// Close is CloseWithin(DefaultCloseTimeout).
 func (a *Adapter) Close() {
+	a.CloseWithin(DefaultCloseTimeout)
+}
+
+// CloseWithin unregisters the adapter from the repository's usage stream, waits up to timeout for the dispatches
+// already in progress (including asynchronous sends) to finish, and then closes all plugins, so no plugin is sent
+// an event during or after its Close unless the wait times out (which is logged). It reports whether everything in
+// progress finished. Plugins registered afterwards are closed straight away. Idempotent. A plugin's Send that
+// closes the adapter (or its config) only delays Close by the timeout, as Close waits for that Send.
+func (a *Adapter) CloseWithin(timeout time.Duration) bool {
 	a.pluginsMu.Lock()
 	if a.closed.Load() {
 		a.pluginsMu.Unlock()
-		return
+		return true
 	}
 	a.closed.Store(true)
 	a.pluginsMu.Unlock()
 
 	a.repository.RemoveUsageStream(a.handlerID)
 
-	a.idleMu.Lock()
-	for a.active.Load() > 0 {
-		a.idle.Wait()
+	// a leave that reached zero before closed was set did not close idle, so check here as well
+	if a.active.Load() == 0 {
+		a.idleOnce.Do(func() { close(a.idle) })
 	}
-	a.idleMu.Unlock()
+	finished := true
+	timer := time.NewTimer(timeout)
+	select {
+	case <-a.idle:
+		timer.Stop()
+	case <-timer.C:
+		finished = false
+		a.logger.WithField("timeout", timeout).Warn("usage plugins were still sending when the timeout ran out, closing them anyway")
+	}
 
 	for _, p := range a.currentPlugins().all {
 		p.Close()
 	}
+	return finished
 }
 
 func (a *Adapter) dispatch(ctx context.Context, event UsageEvent) context.Context {

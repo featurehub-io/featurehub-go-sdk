@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/errors"
 	"github.com/featurehub-io/featurehub-go-sdk/pkg/interfaces"
@@ -17,8 +18,10 @@ import (
 
 // ClientFeatureHubRepository holds the local cache of features, notifiers, and readiness state:
 type ClientFeatureHubRepository struct {
-	features          map[string]*models.FeatureState
-	featuresMutex     sync.Mutex
+	// features is never changed once published: writers copy it, change the copy and publish that (taking turns
+	// on featuresMutex), so feature reads and evaluation take no lock. See "Feature reads take no lock" in CLAUDE.md.
+	features          atomic.Pointer[map[string]*models.FeatureState]
+	featuresMutex     sync.Mutex // makes feature writes take turns; never taken by reads
 	hasData           atomic.Bool
 	logger            *logrus.Logger
 	notifiers         notifiers
@@ -26,7 +29,7 @@ type ClientFeatureHubRepository struct {
 	readinessListener func(context context.Context)
 	interceptorsMu    sync.Mutex                                           // makes AddValueInterceptor and Close take turns, and guards interceptorsDone
 	valueInterceptors atomic.Pointer[[]interfaces.FeatureValueInterceptor] // replaced (never changed) when one is added, so reads take no lock
-	interceptorsDone  bool                                                 // set by Close; interceptors added afterwards are closed straight away
+	interceptorsDone  chan struct{}                                        // made by the first Close and closed when it has finished; interceptors added afterwards are closed straight away
 	usageProvider     usage.ProviderFactory
 	usageStreams      map[int]usage.StreamHandler
 	usageStreamsMu    sync.Mutex
@@ -34,12 +37,33 @@ type ClientFeatureHubRepository struct {
 }
 
 func NewClientFeatureHubRepository(logger *logrus.Logger) *ClientFeatureHubRepository {
-	return &ClientFeatureHubRepository{
-		features:      make(map[string]*models.FeatureState),
+	r := &ClientFeatureHubRepository{
 		logger:        logger,
 		notifiers:     make(notifiers),
 		usageProvider: usage.DefaultProvider,
 	}
+	r.features.Store(&map[string]*models.FeatureState{})
+	return r
+}
+
+// featureMap returns the current features, which must not be changed. A read uses one map throughout, and a
+// feature may be updated while it is being evaluated: that is expected, so reads never lock.
+func (r *ClientFeatureHubRepository) featureMap() map[string]*models.FeatureState {
+	if features := r.features.Load(); features != nil {
+		return *features
+	}
+	return nil
+}
+
+// copyFeatures returns a copy of the current features for a writer to change and publish. featuresMutex must be
+// held:
+func (r *ClientFeatureHubRepository) copyFeatures() map[string]*models.FeatureState {
+	current := r.featureMap()
+	features := make(map[string]*models.FeatureState, len(current)+1)
+	for k, v := range current {
+		features[k] = v
+	}
+	return features
 }
 
 func (r *ClientFeatureHubRepository) UsageProvider() usage.ProviderFactory {
@@ -154,7 +178,7 @@ func (r *ClientFeatureHubRepository) WithContext(context *models.Context) interf
 // the interceptor is closed straight away instead, so it is never left open.
 func (r *ClientFeatureHubRepository) AddValueInterceptor(valueInterceptor interfaces.FeatureValueInterceptor) {
 	r.interceptorsMu.Lock()
-	if r.interceptorsDone {
+	if r.interceptorsDone != nil {
 		r.interceptorsMu.Unlock()
 		if valueInterceptor.Close != nil {
 			valueInterceptor.Close()
@@ -177,17 +201,35 @@ func (r *ClientFeatureHubRepository) interceptors() []interfaces.FeatureValueInt
 	return nil
 }
 
-// Close calls Close on every registered value interceptor, releasing their resources. Idempotent.
+// Close is closeWithin(usage.DefaultCloseTimeout).
 func (r *ClientFeatureHubRepository) Close() {
+	r.closeWithin(usage.DefaultCloseTimeout)
+}
+
+// closeWithin removes every registered value interceptor, so feature reads no longer call them, and then calls
+// their Close, releasing their resources. Idempotent: a Close while another is running waits up to timeout for it
+// to finish.
+func (r *ClientFeatureHubRepository) closeWithin(timeout time.Duration) {
 	r.interceptorsMu.Lock()
-	if r.interceptorsDone {
+	if done := r.interceptorsDone; done != nil {
 		r.interceptorsMu.Unlock()
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		select {
+		case <-done:
+		case <-timer.C:
+			r.logger.WithField("timeout", timeout).Warn("value interceptors were still closing when the timeout ran out")
+		}
 		return
 	}
-	r.interceptorsDone = true
+	done := make(chan struct{})
+	r.interceptorsDone = done
+	interceptors := r.interceptors()
+	r.valueInterceptors.Store(nil)
 	r.interceptorsMu.Unlock()
+	defer close(done)
 
-	for _, interceptor := range r.interceptors() {
+	for _, interceptor := range interceptors {
 		if interceptor.Close != nil {
 			interceptor.Close()
 		}
@@ -195,25 +237,20 @@ func (r *ClientFeatureHubRepository) Close() {
 }
 
 func (r *ClientFeatureHubRepository) AllKeys() []string {
-	r.featuresMutex.Lock()
+	features := r.featureMap()
+	keys := make([]string, 0, len(features))
 
-	defer r.featuresMutex.Unlock()
-
-	keys := make([]string, 0, len(r.features))
-
-	for k := range r.features {
+	for k := range features {
 		keys = append(keys, k)
 	}
 
 	return keys
 }
 
-// GetFeature searches for a feature by key:
+// GetFeature searches for a feature by key. It takes no lock: the feature may be updated while it is being
+// evaluated, which is expected, so interceptors run without any lock held and may read features themselves.
 func (r *ClientFeatureHubRepository) GetFeature(context context.Context, key string) (feature *models.FeatureState, matched bool, value interface{}, err error) {
-	r.featuresMutex.Lock()
-	defer r.featuresMutex.Unlock()
-
-	feature, ok := r.features[key]
+	feature, ok := r.featureMap()[key]
 
 	// regardless of whether we found it or not, we need to walk the interceptors passing what we found
 	if interceptors := r.interceptors(); interceptors != nil {
@@ -363,10 +400,7 @@ func (r *ClientFeatureHubRepository) String(context context.Context, featureKey 
 }
 
 func (r *ClientFeatureHubRepository) Properties(context context.Context, featureKey string) map[string]string {
-	r.featuresMutex.Lock()
-	defer r.featuresMutex.Unlock()
-
-	feature, ok := r.features[featureKey]
+	feature, ok := r.featureMap()[featureKey]
 
 	if ok {
 		return feature.Properties
@@ -494,15 +528,16 @@ func (r *ClientFeatureHubRepository) ProcessFeature(feature *models.FeatureState
 	r.isReady(snapshot)
 }
 
-// storeFeature applies a single feature update under featuresMutex. It returns a copy of the resulting
-// feature map and whether the update was applied:
+// storeFeature applies a single feature update under featuresMutex. It returns the resulting feature map (which
+// must not be changed) and whether the update was applied:
 func (r *ClientFeatureHubRepository) storeFeature(feature *models.FeatureState) (map[string]*models.FeatureState, bool) {
 	r.featuresMutex.Lock()
 	defer r.featuresMutex.Unlock()
 
 	var currentFeature *models.FeatureState
+	features := r.copyFeatures()
 
-	for _, findFeature := range r.features {
+	for _, findFeature := range features {
 		if findFeature.ID == feature.ID {
 			if findFeature.Key != feature.Key {
 				if findFeature.Version > feature.Version {
@@ -512,7 +547,7 @@ func (r *ClientFeatureHubRepository) storeFeature(feature *models.FeatureState) 
 				}
 				// the old feature with this key is not the same
 				// remove the old feature key, it will be added back in with the new key later
-				delete(r.features, findFeature.Key)
+				delete(features, findFeature.Key)
 
 				// the key has changed so we need to change the notifiers as well
 				r.notifiersMutex.Lock()
@@ -539,14 +574,10 @@ func (r *ClientFeatureHubRepository) storeFeature(feature *models.FeatureState) 
 	}
 
 	r.logger.WithField("key", feature.Key).Debug("Received a new feature from server")
-	r.features[feature.Key] = feature
+	features[feature.Key] = feature
+	r.features.Store(&features)
 
-	snapshot := make(map[string]*models.FeatureState, len(r.features))
-	for k, v := range r.features {
-		snapshot[k] = v
-	}
-
-	return snapshot, true
+	return features, true
 }
 
 // ProcessFeatures replaces the entire feature set from an SSE event payload:
@@ -558,8 +589,8 @@ func (r *ClientFeatureHubRepository) ProcessFeatures(features []*models.FeatureS
 	}
 
 	r.featuresMutex.Lock()
-	oldFeatures := r.features
-	r.features = newFeatures
+	oldFeatures := r.featureMap()
+	r.features.Store(&newFeatures)
 	r.featuresMutex.Unlock()
 
 	r.isReady(newFeatures)
@@ -586,10 +617,12 @@ func (r *ClientFeatureHubRepository) ProcessDeleteFeature(feature *models.Featur
 
 	// try and find the feature with the same ID and delete that one,
 	// the key doesn't matter
-	for _, findFeature := range r.features {
+	for _, findFeature := range r.featureMap() {
 		if findFeature.ID == feature.ID {
 			r.logger.WithField("key", findFeature.Key).Debug("Deleted a feature")
-			delete(r.features, findFeature.Key)
+			features := r.copyFeatures()
+			delete(features, findFeature.Key)
+			r.features.Store(&features)
 			break
 		}
 	}
@@ -598,13 +631,10 @@ func (r *ClientFeatureHubRepository) ProcessDeleteFeature(feature *models.Featur
 }
 
 func (r *ClientFeatureHubRepository) GetFeatures() []*models.FeatureIdentity {
-	r.featuresMutex.Lock()
+	current := r.featureMap()
+	features := make([]*models.FeatureIdentity, 0, len(current))
 
-	defer r.featuresMutex.Unlock()
-
-	features := make([]*models.FeatureIdentity, 0, len(r.features))
-
-	for _, f := range r.features {
+	for _, f := range current {
 		features = append(features, &models.FeatureIdentity{ID: f.ID, Key: f.Key, ValueType: f.Type, EnvironmentID: f.EnvironmentID})
 	}
 

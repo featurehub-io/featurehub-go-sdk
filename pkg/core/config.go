@@ -27,6 +27,9 @@ const DefaultSSEReadTimeout = 4 * time.Minute
 // each consecutive failed reconnect until it reaches this.
 const DefaultSSEMaxRetryDelay = time.Minute
 
+// DefaultCloseTimeout is the longest Close waits for usage sends in progress, or for another Close, to finish.
+const DefaultCloseTimeout = usage.DefaultCloseTimeout
+
 // Config defines parameters for the repository:
 type Config struct {
 	LogLevel          logrus.Level // Logging level (default is "info")
@@ -38,6 +41,7 @@ type Config struct {
 	repoMu            sync.Mutex                // makes setting, creating and discarding state take turns; taken after edgeMu, never before
 	state             atomic.Pointer[repoState] // the repository and its usage adapter, set once (nil before first use and once closed)
 	closeDone         chan struct{}             // made by the first Close (under edgeMu) and closed when it has finished
+	closeTimeout      time.Duration             // the longest Close waits for work in progress; DefaultCloseTimeout if zero or less
 	EdgeProvider      EdgeProviderFunc
 	fatalErrorHandler atomic.Pointer[interfaces.ErrorFunc] // A user-provided handler func for fatal asynchronous errors, read by edge clients' goroutines
 	requestedEdgeType atomic.Value                         // models.EdgeType, written under edgeMu but read by usage plugin goroutines
@@ -98,6 +102,8 @@ func (p *passiveRestPollPlugin) CanSendAsync() bool                           { 
 func (p *passiveRestPollPlugin) Close()                                       {}
 
 func (p *passiveRestPollPlugin) Send(ctx context.Context, _ usage.UsageEvent) context.Context {
+	// a lock-free fast path, so events outside passive mode never take edgeMu; passiveEdgeClient checks again under
+	// the lock, as the edge type may change in between
 	if p.config.EdgeType() != models.EdgePassiveRest {
 		return ctx
 	}
@@ -198,14 +204,23 @@ func (c *Config) closeEdge() {
 // Close shuts down the edge client, releases all interceptors and plugins, nils all
 // internal references, and marks the config as closed. Idempotent: a Close while another is running waits for it
 // to finish, so plugins have flushed when any Close returns. Plugins and interceptors are closed without any lock
-// held, so their Close may call back into the config (which is then closed), except to call Close itself.
+// held, so their Close may call back into the config (which is then closed). Waits are bounded by CloseTimeout
+// (logged when it runs out), so a stuck usage Send, or a plugin calling Close from its own Close or Send, delays
+// Close by at most that long rather than hanging it.
 func (c *Config) Close() {
+	timeout := c.CloseTimeout()
 	c.edgeMu.Lock()
 	if c.closed.Load() {
 		done := c.closeDone
 		c.edgeMu.Unlock()
 		if done != nil {
-			<-done
+			timer := time.NewTimer(timeout)
+			defer timer.Stop()
+			select {
+			case <-done:
+			case <-timer.C:
+				c.Logger.WithField("timeout", timeout).Warn("another Close was still running when the timeout ran out")
+			}
 		}
 		return
 	}
@@ -222,8 +237,8 @@ func (c *Config) Close() {
 
 	if state != nil {
 		// the adapter first, so no more usage events reach the plugins once the interceptors start closing
-		state.adapter.Close()
-		state.repository.Close()
+		state.adapter.CloseWithin(timeout)
+		state.repository.closeWithin(timeout)
 	}
 }
 
@@ -490,6 +505,21 @@ func (c *Config) SSEReadTimeout() time.Duration {
 		return DefaultSSEReadTimeout
 	}
 	return c.sseReadTimeout
+}
+
+// WithCloseTimeout sets the longest Close waits for usage plugin sends already in progress, or for another Close,
+// to finish before carrying on (DefaultCloseTimeout, 5s, by default). Zero or less means the default.
+func (c *Config) WithCloseTimeout(value time.Duration) interfaces.FeatureHubConfig {
+	c.closeTimeout = value
+	return c
+}
+
+// CloseTimeout returns the longest Close waits for work in progress, or DefaultCloseTimeout if zero or less:
+func (c *Config) CloseTimeout() time.Duration {
+	if c.closeTimeout <= 0 {
+		return DefaultCloseTimeout
+	}
+	return c.closeTimeout
 }
 
 // WithSSEMaxRetryDelay sets the longest a streaming (SSE) connection waits before reconnecting. The delay

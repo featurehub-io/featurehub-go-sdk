@@ -242,3 +242,27 @@ func TestClosedAdapterSendsNothing(t *testing.T) {
 
 	assert.Empty(t, plugin.seen)
 }
+
+func TestAdapterCloseGivesUpOnAStuckSend(t *testing.T) {
+	repo := newMockRepo()
+	adapter := NewAdapter(repo, newTestLogger())
+	plugin := &blockingPlugin{started: make(chan struct{}), release: make(chan struct{})}
+	defer close(plugin.release)
+	adapter.RegisterPlugin(plugin)
+
+	repo.emit(NewUsageEventWithFeature(&FeatureHubUsageValue{ID: "1", Key: "f", Value: "on"}, nil, ""))
+	<-plugin.started
+
+	start := time.Now()
+	assert.False(t, adapter.CloseWithin(50*time.Millisecond), "the stuck send did not finish")
+	assert.Less(t, time.Since(start), time.Second)
+	plugin.mu.Lock()
+	defer plugin.mu.Unlock()
+	assert.Equal(t, []string{"close"}, plugin.order, "the plugin is closed anyway")
+}
+
+func TestAdapterCloseWithNothingInProgressReturnsAtOnce(t *testing.T) {
+	adapter := NewAdapter(newMockRepo(), newTestLogger())
+	adapter.RegisterPlugin(newMockPlugin())
+	assert.True(t, adapter.CloseWithin(time.Hour))
+}

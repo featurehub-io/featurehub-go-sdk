@@ -124,6 +124,7 @@ type FeatureHubConfig interface {
 	Timeout() time.Duration
 	SSEReadTimeout() time.Duration
 	SSEMaxRetryDelay() time.Duration
+	CloseTimeout() time.Duration
 	EdgeType() models.EdgeType
 
 	// Configuration (fluent)
@@ -132,6 +133,7 @@ type FeatureHubConfig interface {
 	WithWaitForData(value time.Duration) FeatureHubConfig
 	WithSSEReadTimeout(value time.Duration) FeatureHubConfig
 	WithSSEMaxRetryDelay(value time.Duration) FeatureHubConfig
+	WithCloseTimeout(value time.Duration) FeatureHubConfig
 	WithFatalErrorHandler(fatalErrorFunc ErrorFunc) FeatureHubConfig
 	RegisterUsagePlugin(plugin usage.Plugin) FeatureHubConfig
 	AddValueInterceptor(valueInterceptor FeatureValueInterceptor)
