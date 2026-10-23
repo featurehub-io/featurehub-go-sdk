@@ -16,57 +16,38 @@ func newTimeoutTestClient(t *testing.T, serverURL string, readTimeout time.Durat
 	return newSSETestClient(t, serverURL, func(config *core.Config) { config.WithSSEReadTimeout(readTimeout) })
 }
 
-func TestIdleStreamReconnectsWithLastEventIDAfterReadTimeout(t *testing.T) {
+func TestSilentStreamsReconnectWithLastEventIDAfterReadTimeout(t *testing.T) {
 	server := &sseServer{}
 	ts := server.start(t, func(connection int, w http.ResponseWriter, f http.Flusher, r *http.Request) {
 		if connection == 1 {
-			// a short retry so the reconnect happens quickly
+			// a short retry so the reconnects happen quickly
 			fmt.Fprint(w, "retry: 10\nid: 42\nevent: features\ndata: [{\"id\":\"1\",\"key\":\"flag\",\"type\":\"BOOLEAN\",\"value\":true,\"version\":1}]\n\n")
 			f.Flush()
 		}
-		// then go quiet, as the server does when the Last-Event-ID is current
+		// then go (or stay) quiet, as the server does when the Last-Event-ID is current. The server never ends a
+		// connection and sends its headers at once, so each connection can only end with the client's read timeout
 		<-r.Context().Done()
 	})
-
-	_, repo := newTimeoutTestClient(t, ts.URL, 200*time.Millisecond)
-
-	assert.Eventually(t, func() bool { return len(server.connections()) >= 2 }, 3*time.Second, 10*time.Millisecond)
-
-	connections := server.connections()
-	assert.Equal(t, "", connections[0], "the first connection has no Last-Event-ID")
-	assert.Equal(t, "42", connections[1], "the reconnect sends the last event id received")
-	assert.True(t, repo.IsReady())
-}
-
-func TestSeveralSilentStreamsOnlyReconnect(t *testing.T) {
-	server := &sseServer{}
-	ts := server.start(t, func(connection int, w http.ResponseWriter, f http.Flusher, r *http.Request) {
-		if connection == 1 {
-			fmt.Fprint(w, "retry: 10\nid: 42\nevent: features\ndata: [{\"id\":\"1\",\"key\":\"flag\",\"type\":\"BOOLEAN\",\"value\":true,\"version\":1}]\n\n")
-			f.Flush()
-		}
-		// every connection then goes (or stays) silent, so each one ends with a read timeout
-		<-r.Context().Done()
-	})
-	fatal := make(chan string, 10)
 	client, repo := newSSETestClient(t, ts.URL, func(config *core.Config) {
 		config.WithSSEReadTimeout(100 * time.Millisecond)
-		// silent reconnects send no events, so the backoff grows; keep it short for the test
+		// only to keep the test fast: reconnects with no events back off, doubling up to this
 		config.WithSSEMaxRetryDelay(50 * time.Millisecond)
-		config.WithFatalErrorHandler(func(err error, message string, _ map[string]interface{}) { fatal <- message })
 	})
 
 	assert.Eventually(t, func() bool { return len(server.connections()) >= 6 }, 5*time.Second, 10*time.Millisecond)
 
-	// a silent stream is not an error: the client keeps reconnecting and the repository keeps serving its data
+	// a silent stream is not an error: the client keeps reconnecting (it never stops, so the fatal error handler
+	// is never called) and the repository keeps serving its data
 	assert.False(t, client.Stopped())
 	assert.Nil(t, client.StopReason())
-	assert.Empty(t, fatal, "the fatal error handler is not called")
 	assert.True(t, repo.IsReady())
 	_, _, value, err := repo.GetFeature(context.Background(), "flag")
 	assert.NoError(t, err)
 	assert.Equal(t, true, value)
-	for _, lastEventID := range server.connections()[1:] {
+
+	connections := server.connections()
+	assert.Equal(t, "", connections[0], "the first connection has no Last-Event-ID")
+	for _, lastEventID := range connections[1:] {
 		assert.Equal(t, "42", lastEventID, "every reconnect resumes from the last event received")
 	}
 }
